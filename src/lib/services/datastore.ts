@@ -2,14 +2,26 @@ import type { Project } from '$lib/models/types';
 import { parseProjectJson, serializeProjectCompact } from '$lib/persistence/projectIo';
 import { isQuotaExceededError, StorageQuotaError } from './storageErrors';
 
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  updatedAt: string;
+}
+
+/**
+ * Storage abstraction for projects and their thumbnails.
+ *
+ * Thumbnail methods are async because IndexedDB — the primary backend — has no synchronous
+ * read. The localStorage implementation resolves immediately.
+ */
 export interface DataStore {
   save(project: Project): Promise<void>;
   load(id: string): Promise<Project | null>;
-  list(): Promise<{ id: string; name: string; updatedAt: string }[]>;
+  list(): Promise<ProjectSummary[]>;
   delete(id: string): Promise<void>;
   duplicate(id: string): Promise<Project | null>;
-  saveThumbnail(id: string, dataUrl: string): void;
-  getThumbnail(id: string): string | null;
+  saveThumbnail(id: string, dataUrl: string): Promise<void>;
+  getThumbnail(id: string): Promise<string | null>;
 }
 
 const KEY = 'floorplan_projects';
@@ -96,7 +108,7 @@ export const localStore: DataStore = {
     // Deliberately a shallow metadata read rather than a full load: the project list must
     // stay cheap. One unreadable entry is skipped with a warning instead of taking down
     // the whole list — the user can still open and export their other projects.
-    const entries: { id: string; name: string; updatedAt: string }[] = [];
+    const entries: ProjectSummary[] = [];
     for (const [key, raw] of Object.entries(all)) {
       try {
         const p = JSON.parse(raw as string);
@@ -136,11 +148,66 @@ export const localStore: DataStore = {
     return dup;
   },
 
-  saveThumbnail(id: string, dataUrl: string) {
+  async saveThumbnail(id: string, dataUrl: string) {
+    // Derived data — a thumbnail that will not fit must never surface as an error.
     try { localStorage.setItem(thumbKey(id), dataUrl); } catch {}
   },
 
-  getThumbnail(id: string): string | null {
+  async getThumbnail(id: string): Promise<string | null> {
     try { return localStorage.getItem(thumbKey(id)); } catch { return null; }
   },
+};
+
+/**
+ * Pick the storage backend, once per session.
+ *
+ * IndexedDB is preferred: localStorage caps the origin at a few megabytes and inline
+ * background images can exhaust that with one traced plan (HP-105). localStorage remains the
+ * fallback for environments without IndexedDB — SSR, and some private-browsing modes — so
+ * editing never hard-fails on storage availability.
+ *
+ * On the first IndexedDB resolution, projects saved by the localStorage build are copied
+ * across. That migration is non-destructive and runs at most once.
+ */
+let resolvedStore: Promise<DataStore> | null = null;
+
+export function resolveDataStore(): Promise<DataStore> {
+  if (!resolvedStore) {
+    resolvedStore = (async (): Promise<DataStore> => {
+      try {
+        const { idbStore, isIndexedDbAvailable, migrateLocalStorageProjects } =
+          await import('./idbStore');
+
+        if (!isIndexedDbAvailable()) {
+          console.warn('[DataStore] IndexedDB unavailable; falling back to localStorage.');
+          return localStore;
+        }
+
+        await migrateLocalStorageProjects();
+        return idbStore;
+      } catch (e: unknown) {
+        // A broken IndexedDB must not make the app unusable — degrade to localStorage.
+        console.error('[DataStore] IndexedDB init failed; falling back to localStorage.', e);
+        return localStore;
+      }
+    })();
+  }
+
+  return resolvedStore;
+}
+
+/**
+ * The store the app should use.
+ *
+ * A facade so callers stay unaware of which backend won and never have to await resolution
+ * separately — every call resolves it on demand and it is cached after the first.
+ */
+export const projectStore: DataStore = {
+  save: async (project) => (await resolveDataStore()).save(project),
+  load: async (id) => (await resolveDataStore()).load(id),
+  list: async () => (await resolveDataStore()).list(),
+  delete: async (id) => (await resolveDataStore()).delete(id),
+  duplicate: async (id) => (await resolveDataStore()).duplicate(id),
+  saveThumbnail: async (id, dataUrl) => (await resolveDataStore()).saveThumbnail(id, dataUrl),
+  getThumbnail: async (id) => (await resolveDataStore()).getThumbnail(id),
 };

@@ -89,12 +89,12 @@ describe('localStore — normal operation', () => {
 	it('deletes a project and its thumbnail', async () => {
 		const project = createProject('Doomed');
 		await localStore.save(project);
-		localStore.saveThumbnail(project.id, 'data:image/jpeg;base64,AAA');
+		await localStore.saveThumbnail(project.id, 'data:image/jpeg;base64,AAA');
 
 		await localStore.delete(project.id);
 
 		expect(await localStore.load(project.id)).toBeNull();
-		expect(localStore.getThumbnail(project.id)).toBeNull();
+		expect(await localStore.getThumbnail(project.id)).toBeNull();
 	});
 
 	it('duplicates a project under a new id', async () => {
@@ -149,8 +149,8 @@ describe('localStore — quota exhaustion must not destroy data', () => {
 		await localStore.save(project);
 
 		// Fill the remaining budget with thumbnails, then demand a larger project write.
-		localStore.saveThumbnail('other-a', 'x'.repeat(3000));
-		localStore.saveThumbnail('other-b', 'x'.repeat(3000));
+		await localStore.saveThumbnail('other-a', 'x'.repeat(3000));
+		await localStore.saveThumbnail('other-b', 'x'.repeat(3000));
 		const grown = paddedProject('p1', 'House', 4000);
 		storage.setByteLimit(storage.usedBytes() + 200);
 
@@ -158,8 +158,8 @@ describe('localStore — quota exhaustion must not destroy data', () => {
 
 		// Project saved, thumbnails sacrificed.
 		expect((await localStore.load('p1'))!.name).toBe('House');
-		expect(localStore.getThumbnail('other-a')).toBeNull();
-		expect(localStore.getThumbnail('other-b')).toBeNull();
+		expect(await localStore.getThumbnail('other-a')).toBeNull();
+		expect(await localStore.getThumbnail('other-b')).toBeNull();
 	});
 
 	it('does not corrupt the existing project map when a save fails', async () => {
@@ -184,17 +184,17 @@ describe('localStore — quota exhaustion must not destroy data', () => {
 });
 
 describe('localStore — thumbnails', () => {
-	it('stores and reads a thumbnail', () => {
-		localStore.saveThumbnail('p1', 'data:image/jpeg;base64,AAA');
+	it('stores and reads a thumbnail', async () => {
+		await localStore.saveThumbnail('p1', 'data:image/jpeg;base64,AAA');
 
-		expect(localStore.getThumbnail('p1')).toBe('data:image/jpeg;base64,AAA');
+		expect(await localStore.getThumbnail('p1')).toBe('data:image/jpeg;base64,AAA');
 	});
 
-	it('silently tolerates a thumbnail that will not fit', () => {
+	it('silently tolerates a thumbnail that will not fit', async () => {
 		storage.setByteLimit(10);
 
 		// Thumbnails are derived data: failing to cache one must never surface as an error.
-		expect(() => localStore.saveThumbnail('p1', 'x'.repeat(1000))).not.toThrow();
-		expect(localStore.getThumbnail('p1')).toBeNull();
+		await expect(localStore.saveThumbnail('p1', 'x'.repeat(1000))).resolves.toBeUndefined();
+		expect(await localStore.getThumbnail('p1')).toBeNull();
 	});
 });

@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
 import { currentProject } from './project';
-import { localStore } from '$lib/services/datastore';
+import { projectStore } from '$lib/services/datastore';
 import { StorageQuotaError } from '$lib/services/storageErrors';
 import { saveSnapshot } from '$lib/stores/versionHistory';
 
@@ -73,7 +73,7 @@ function captureThumbnail(projectId: string) {
     if (!ctx) return;
     ctx.drawImage(canvas, 0, 0, tmp.width, tmp.height);
     const dataUrl = tmp.toDataURL('image/jpeg', 0.6);
-    localStore.saveThumbnail(projectId, dataUrl);
+    projectStore.saveThumbnail(projectId, dataUrl);
   } catch {}
 }
 
@@ -82,7 +82,7 @@ async function autoSave() {
   if (!p) return;
   saveState.set('saving');
   try {
-    await localStore.save(p);
+    await projectStore.save(p);
     captureThumbnail(p.id);
     saveState.set('saved');
     saveError.set(null);
@@ -103,7 +103,7 @@ export async function manualSave() {
   if (!p) return;
   saveState.set('saving');
   try {
-    await localStore.save(p);
+    await projectStore.save(p);
     captureThumbnail(p.id);
     saveSnapshot(p, 'Manual save');
     saveState.set('saved');

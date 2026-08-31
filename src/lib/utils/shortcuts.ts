@@ -1,6 +1,6 @@
 import { selectedTool, undo, redo, viewMode, selectedElementId, selectedElementIds, removeElement, panMode, beginUndoGroup, endUndoGroup } from '$lib/stores/project';
 import { get } from 'svelte/store';
-import { localStore } from '$lib/services/datastore';
+import { projectStore } from '$lib/services/datastore';
 import { currentProject } from '$lib/stores/project';
 
 export interface ShortcutContext {
@@ -29,7 +29,7 @@ export function handleGlobalShortcut(e: KeyboardEvent, ctx: ShortcutContext = {}
     if (ctx.save) ctx.save();
     else {
       const p = get(currentProject);
-      if (p) localStore.save(p);
+      if (p) projectStore.save(p);
     }
     return true;
   }

@@ -35,11 +35,13 @@ Nothing below is marked Working on the strength of the upstream README alone.
 | Future-schema rejection | Working | `test` — `migrations.test.ts` | Actionable message; file left untouched |
 | Save/load round-trip fidelity | Working | `test` — `roundTrip.test.ts`, `goldenFixtures.test.ts` | Byte-identical across all 10 fixtures |
 | JSON export / import | Working | `test` (load path), `none` (file dialog) | Import now shares the load pipeline |
-| localStorage persistence | Working | `test` — `datastore.test.ts` | Quota handling no longer destructive — see §1.1 |
+| IndexedDB persistence (primary) | Working | `test` — `idbStore.test.ts` | Added by HP-105; verified against `fake-indexeddb`, incl. a 6 MB project |
+| localStorage persistence (fallback) | Working | `test` — `datastore.test.ts` | Used only when IndexedDB is unavailable; quota handling no longer destructive — see §1.1 |
+| Backend selection + fallback | Working | `test` — `storeResolution.test.ts` | `projectStore` facade; degrades to localStorage if IndexedDB is absent or fails to open |
+| localStorage → IndexedDB migration | Working | `test` — `idbStore.test.ts` | Runs once, non-destructive, never overwrites newer IndexedDB records |
 | Autosave | Not verified | `none` | `stores/saveStatus.ts`; interval logic unexercised |
 | Version history snapshots | Partially working | `code` | Max 10 snapshots, 5-min interval; restore now migrates |
-| IndexedDB storage | Broken | `code` | **Does not exist.** No `indexedDB` reference anywhere in `src/` — HP-105 |
-| Thumbnails | Not verified | `none` | localStorage, one key per project; no quota guard |
+| Thumbnails | Working | `test` | Own IndexedDB store; treated as derived data, never fatal on failure |
 
 ### 1.1 localStorage quota handling — fixed
 
@@ -65,8 +67,42 @@ This satisfies HP-105's "no automatic deletion of unrelated projects on quota pr
 Locked in by `tests/persistence/datastore.test.ts`, which asserts a pre-existing project
 survives a failed save and that the project map is left byte-identical.
 
-Still outstanding: background images remain inline data URLs, so quota pressure is likely
-once real plans are imported. Moving assets to IndexedDB blobs is the rest of HP-105.
+### 1.2 IndexedDB is now the primary backend (HP-105)
+
+localStorage caps the whole origin at roughly 5 MB. Background reference images persist as
+inline data URLs, so one traced architect plan could exhaust it — and the quota path above,
+however safe, still means *the save fails*. Fixing the failure mode was necessary but not
+sufficient; the capacity limit had to go.
+
+`src/lib/services/idbStore.ts` implements the same `DataStore` interface over IndexedDB, whose
+budget is a share of free disk rather than a few megabytes. Three object stores: `projects`
+(keyed by id, with an `updatedAt` index for listing), `thumbnails`, and `meta` for migration
+bookkeeping.
+
+`resolveDataStore()` picks the backend once per session and `projectStore` is the facade every
+caller uses, so no call site knows which won. IndexedDB is preferred; localStorage remains the
+fallback for environments without it (SSR, some private-browsing modes) and for the case where
+opening the database throws, so editing never hard-fails on storage availability.
+
+Thumbnail methods became async as a consequence — IndexedDB has no synchronous read. The
+project list fetches them in parallel rather than sequentially.
+
+On first IndexedDB resolution, projects saved by the localStorage build are copied across.
+The migration is **non-destructive** — nothing is removed from localStorage, because that copy
+is the user's safety net if IndexedDB misbehaves on their browser and the space it occupies is
+no longer the binding constraint. Existing IndexedDB records always win, so re-running can
+never clobber newer work.
+
+**Still outstanding:** assets remain inline inside the project record. Extracting background
+images and custom entourage PNGs into a dedicated blob store needs a schema version bump and
+asset resolution at render time. With IndexedDB's capacity that is now a load-performance
+optimisation rather than a data-loss fix, so it is deliberately deferred.
+
+**Verification gap:** the IndexedDB suite runs against `fake-indexeddb`, a faithful
+spec implementation, and both routes were confirmed to render server-side without an
+`indexedDB is not defined` SSR failure. Behaviour in a *real* browser — structured clone of
+the stored records, actual quota behaviour under pressure — is **not yet verified**; the Chrome
+extension was unavailable when this landed.
 
 ---
 
@@ -285,15 +321,18 @@ but it needs that check first, so it is not bundled into the foundation work.
 | X-junctions detected **0 rooms** on a four-quadrant plan (§2) | All ten fixtures pass |
 | Hit testing ignored per-item dimensions (§3.1) | One shared resolver across all six consumers |
 | Room reconciliation needed exact wall-set equality and dropped 3 of 5 authored fields (§2.1) | Similarity matching in a tested domain module; all authored fields carried |
+| Storage capped at ~5 MB by localStorage, so one traced plan could exhaust it (§1.2) | IndexedDB primary, localStorage fallback, one-time non-destructive migration |
 
 ### Outstanding, ranked by risk to real house data
 
-1. **Assets are inline data URLs** (§1.1) — the destructive path is gone, but quota pressure
-   is still likely once real plans are imported, and a full quota blocks saving. Moving assets
-   to IndexedDB blobs is the rest of **HP-105**.
+1. **No real-browser verification of the storage layer** (§1.2) — the IndexedDB suite runs
+   against `fake-indexeddb` only. This is the highest-value gap now, because it covers the code
+   that holds the user's houses.
 2. **HP-005 Three.js lifecycle audit is still open** (§7) — no evidence either way on leaks,
    and repeated 2D/3D switching is a core workflow.
-3. **No E2E harness** (§8) — the reason most of §7 and much of §4 remain `none`. Until this
-   exists, this document cannot honestly upgrade those rows.
-4. **`measure` / `annotate` tools diverge from the `Tool` type** (§8) — needs a runtime check
+3. **No E2E harness** (§8) — the reason most of §7 and much of §4 remain `none`, and the
+   reason item 1 exists. Until this lands, this document cannot honestly upgrade those rows.
+4. **Assets remain inline in the project record** (§1.2) — now a load-performance concern
+   rather than a data-loss one, since capacity is no longer the constraint.
+5. **`measure` / `annotate` tools diverge from the `Tool` type** (§8) — needs a runtime check
    to establish which side is wrong before editing.

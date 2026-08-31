@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
-  import { localStore } from '$lib/services/datastore';
+  import { projectStore } from '$lib/services/datastore';
   import { createDefaultProject, currentProject } from '$lib/stores/project';
   import { houseTemplates } from '$lib/utils/houseTemplates';
 
@@ -25,7 +25,7 @@
   async function startFromScratch() {
     const p = createDefaultProject('Untitled Project');
     currentProject.set(p);
-    await localStore.save(p);
+    await projectStore.save(p);
     markSeen();
     goto(`${base}/editor?id=${p.id}`);
   }
@@ -34,7 +34,7 @@
     const template = houseTemplates[index];
     const p = template.create();
     currentProject.set(p);
-    await localStore.save(p);
+    await projectStore.save(p);
     markSeen();
     goto(`${base}/editor?id=${p.id}`);
   }
@@ -59,7 +59,7 @@
       if (data.id && data.floors) {
         data.updatedAt = new Date();
         currentProject.set(data);
-        await localStore.save(data);
+        await projectStore.save(data);
         markSeen();
         goto(`${base}/editor?id=${data.id}`);
       } else {

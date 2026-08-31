@@ -81,6 +81,17 @@ Read from `package.json` at the baseline SHA:
 The baseline had **no test runner, no CI workflow and no `docs/` directory**.
 Those are added by HP-002 and later tickets, not inherited from upstream.
 
+### Dependencies added by this fork
+
+Kept deliberately short — each one replaces code we would otherwise hand-roll in an area with
+awkward edge cases.
+
+| Dependency | Kind | Ticket | Why |
+|---|---|---|---|
+| `vitest` | dev | HP-002 | Test runner; shares Vite's resolution so `$lib` works unchanged |
+| `idb` | runtime | HP-105 | Promise wrapper for IndexedDB; transaction lifetimes are subtle enough to be worth a maintained library |
+| `fake-indexeddb` | dev | HP-105 | Spec-faithful IndexedDB in Node, so storage tests need no browser |
+
 ---
 
 ## 5. Local setup

@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
-  import { localStore } from '$lib/services/datastore';
+  import { projectStore } from '$lib/services/datastore';
   import { createDefaultProject, currentProject } from '$lib/stores/project';
   import WelcomeScreen from '$lib/components/WelcomeScreen.svelte';
   import { houseTemplates } from '$lib/utils/houseTemplates';
@@ -17,14 +17,17 @@
   let showTemplateModal = $state(false);
 
   onMount(async () => {
-    projects = await localStore.list();
+    projects = await projectStore.list();
     // Sort by most recent
     projects.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-    // Load thumbnails
+    // Load thumbnails. Fetched in parallel — thumbnail reads are async now that IndexedDB
+    // is the backend, and doing them in sequence would stall the project list.
     const thumbs: Record<string, string | null> = {};
-    for (const p of projects) {
-      thumbs[p.id] = localStore.getThumbnail(p.id);
-    }
+    await Promise.all(
+      projects.map(async (p) => {
+        thumbs[p.id] = await projectStore.getThumbnail(p.id);
+      })
+    );
     thumbnails = thumbs;
     const seen = localStorage.getItem('hasSeenWelcome');
     if (!seen && projects.length === 0) {
@@ -36,7 +39,7 @@
     const template = houseTemplates[index];
     const p = template.create();
     currentProject.set(p);
-    await localStore.save(p);
+    await projectStore.save(p);
     showTemplateModal = false;
     goto(`${base}/editor?id=${p.id}`);
   }
@@ -44,21 +47,21 @@
   async function newProject() {
     const p = createDefaultProject('Untitled Project');
     currentProject.set(p);
-    await localStore.save(p);
+    await projectStore.save(p);
     goto(`${base}/editor?id=${p.id}`);
   }
 
   async function deleteProject(id: string) {
-    await localStore.delete(id);
+    await projectStore.delete(id);
     confirmDeleteId = null;
-    projects = (await localStore.list()).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    projects = (await projectStore.list()).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }
 
   async function duplicateProject(id: string) {
-    const dup = await localStore.duplicate(id);
+    const dup = await projectStore.duplicate(id);
     if (dup) {
-      projects = (await localStore.list()).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-      thumbnails = { ...thumbnails, [dup.id]: localStore.getThumbnail(dup.id) };
+      projects = (await projectStore.list()).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      thumbnails = { ...thumbnails, [dup.id]: await projectStore.getThumbnail(dup.id) };
     }
     contextMenuId = null;
   }
@@ -75,12 +78,12 @@
 
   async function commitRename(id: string) {
     if (renameValue.trim()) {
-      const p = await localStore.load(id);
+      const p = await projectStore.load(id);
       if (p) {
         p.name = renameValue.trim();
         p.updatedAt = new Date();
-        await localStore.save(p);
-        projects = (await localStore.list()).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        await projectStore.save(p);
+        projects = (await projectStore.list()).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
       }
     }
     renamingId = null;
@@ -104,7 +107,7 @@
 <svelte:window onclick={() => { contextMenuId = null; }} />
 
 {#if showWelcome}
-  <WelcomeScreen onDismiss={() => { showWelcome = false; localStore.list().then(p => { projects = p.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()); }); }} />
+  <WelcomeScreen onDismiss={() => { showWelcome = false; projectStore.list().then(p => { projects = p.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()); }); }} />
 {/if}
 
 <div class="min-h-screen bg-gray-50">

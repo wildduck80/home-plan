@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { base } from '$app/paths';
   import { currentProject, viewMode, undo, redo, addFloor, removeFloor, setActiveFloor, updateProjectName, loadProject, createDefaultProject, snapEnabled, canvasZoom, panMode, showFurnitureStore, layerVisibility, importFloorIntoCurrentProject, activeFloor, selectedElementId, elevationWallId, elevationPickMode } from '$lib/stores/project';
-  import { localStore } from '$lib/services/datastore';
+  import { projectStore } from '$lib/services/datastore';
   import { get } from 'svelte/store';
   import type { Floor, Project } from '$lib/models/types';
   import { exportAsPNG, exportAsJSON, exportAsSVG, exportPDF } from '$lib/utils/export';
