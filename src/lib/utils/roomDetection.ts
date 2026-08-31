@@ -12,11 +12,72 @@ interface Edge {
   end: Point;
 }
 
+interface SplitTarget {
+  splitPoints: { point: Point; t: number }[];
+}
+
+/** Record a split point on a wall, ignoring duplicates at the same location. */
+function addSplitPoint(target: SplitTarget, point: Point, t: number): void {
+  if (target.splitPoints.some(sp => ptEq(sp.point, point))) return;
+  target.splitPoints.push({ point: { x: point.x, y: point.y }, t });
+}
+
 /**
- * Find points where one wall's endpoint lands on another wall's interior (T-junctions).
- * Split such walls into sub-segments so the graph correctly represents all connections.
+ * Where two walls cross strictly inside both segments, if they do.
+ *
+ * "Strictly inside" uses the same `EPSILON` margin as the T-junction pass, expressed as a
+ * fraction of each wall's own length. Crossings that coincide with an endpoint are excluded
+ * here precisely because the T-junction pass already covers them — so no wall is split
+ * twice at the same place. Parallel and collinear walls have no single crossing point and
+ * are skipped.
  */
-function splitWallsAtTJunctions(walls: Wall[]): Edge[] {
+function properCrossing(
+  a: Wall,
+  b: Wall
+): { point: Point; tA: number; tB: number } | null {
+  const rx = a.end.x - a.start.x;
+  const ry = a.end.y - a.start.y;
+  const sx = b.end.x - b.start.x;
+  const sy = b.end.y - b.start.y;
+
+  const lenA = Math.hypot(rx, ry);
+  const lenB = Math.hypot(sx, sy);
+  if (lenA < EPSILON || lenB < EPSILON) return null;
+
+  const denom = rx * sy - ry * sx;
+  // Near-zero cross product means parallel (or collinear) — no isolated crossing.
+  if (Math.abs(denom) < 1e-9) return null;
+
+  const qpx = b.start.x - a.start.x;
+  const qpy = b.start.y - a.start.y;
+  const tA = (qpx * sy - qpy * sx) / denom;
+  const tB = (qpx * ry - qpy * rx) / denom;
+
+  const marginA = EPSILON / lenA;
+  const marginB = EPSILON / lenB;
+  if (tA <= marginA || tA >= 1 - marginA) return null;
+  if (tB <= marginB || tB >= 1 - marginB) return null;
+
+  return {
+    point: { x: a.start.x + tA * rx, y: a.start.y + tA * ry },
+    tA,
+    tB
+  };
+}
+
+/**
+ * Split walls at every junction so the graph represents all connections.
+ *
+ * Two kinds of junction need handling, and missing either one loses rooms:
+ *
+ * - **T-junctions** — one wall's *endpoint* lands on another wall's interior.
+ * - **X-junctions** — two walls *cross* mid-span, with the crossing point being no wall's
+ *   endpoint. Splitting only at endpoints leaves no vertex here, so the planar traversal
+ *   cannot turn at the crossing and the faces either side are never separated. A 400×400
+ *   plan with two crossing dividers returned *zero* rooms before this was handled.
+ *   See docs/room-detection-matrix.md.
+ */
+function splitWallsAtJunctions(walls: Wall[]): Edge[] {
   // Collect all endpoints
   const endpoints: Point[] = [];
   for (const w of walls) {
@@ -58,12 +119,19 @@ function splitWallsAtTJunctions(walls: Wall[]): Edge[] {
       const projY = w.start.y + t * dy;
       const dist = Math.sqrt((ep.x - projX) ** 2 + (ep.y - projY) ** 2);
       if (dist < EPSILON) {
-        // Check we haven't already added a point at this location
-        const already = splitWalls[wi].splitPoints.some(sp => ptEq(sp.point, ep));
-        if (!already) {
-          splitWalls[wi].splitPoints.push({ point: { x: ep.x, y: ep.y }, t });
-        }
+        addSplitPoint(splitWalls[wi], ep, t);
       }
+    }
+  }
+
+  // Second pass: X-junctions. For every pair of walls that properly cross, add the
+  // crossing point to *both* walls so a shared vertex exists there.
+  for (let i = 0; i < walls.length; i++) {
+    for (let j = i + 1; j < walls.length; j++) {
+      const crossing = properCrossing(walls[i], walls[j]);
+      if (!crossing) continue;
+      addSplitPoint(splitWalls[i], crossing.point, crossing.tA);
+      addSplitPoint(splitWalls[j], crossing.point, crossing.tB);
     }
   }
 
@@ -95,7 +163,7 @@ export function detectRooms(walls: Wall[]): Room[] {
   if (walls.length < 3) return [];
 
   // Split walls at T-junctions so shared-wall rooms are properly separated
-  const splitEdges = splitWallsAtTJunctions(walls);
+  const splitEdges = splitWallsAtJunctions(walls);
 
   // Build adjacency: collect unique vertices & edges
   const vertices: Point[] = [];
@@ -258,7 +326,7 @@ export function getRoomPolygon(room: Room, walls: Wall[]): Point[] {
   const wallIds = new Set(room.walls);
   if (walls.filter(w => wallIds.has(w.id)).length < 3) return [];
 
-  let edges = splitWallsAtTJunctions(walls).filter(e => wallIds.has(e.wallId));
+  let edges = splitWallsAtJunctions(walls).filter(e => wallIds.has(e.wallId));
 
   // Iteratively prune dangling sub-segments (parts of split walls that extend
   // past the room and connect to nothing else on this room's boundary).

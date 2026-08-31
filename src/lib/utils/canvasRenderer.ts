@@ -9,6 +9,7 @@ import type { CanvasState } from '$lib/utils/canvasInteraction';
 import type { ProjectSettings } from '$lib/stores/settings';
 import { formatLength, formatArea } from '$lib/stores/settings';
 import { getCatalogItem } from '$lib/utils/furnitureCatalog';
+import { resolveFurnitureDimensions } from '$lib/domain/furniture';
 import { drawFurnitureIcon } from '$lib/utils/furnitureIcons';
 import { getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
 import { getWallTextureCanvas, getFloorTextureCanvas } from '$lib/utils/textureGenerator';
@@ -910,8 +911,9 @@ export function drawFurnitureItem(cs: CanvasState, item: FurnitureItem, selected
   const s = wts(cs, item.position.x, item.position.y);
   const sx = item.scale?.x ?? 1;
   const sy = item.scale?.y ?? 1;
-  const w = (item.width ?? cat.width) * Math.abs(sx) * zoom;
-  const d = (item.depth ?? cat.depth) * Math.abs(sy) * zoom;
+  const physical = resolveFurnitureDimensions(item, cat);
+  const w = physical.width * zoom;
+  const d = physical.depth * zoom;
   const angle = (item.rotation * Math.PI) / 180;
 
   ctx.save();
@@ -1616,8 +1618,9 @@ export function drawMinimap(
     const cat = getCatalogItem(fi.catalogId);
     if (!cat) continue;
     const p = toMini(fi.position.x, fi.position.y);
-    const fw = Math.max(2, (fi.width ?? cat.width) * scale);
-    const fd = Math.max(2, (fi.depth ?? cat.depth) * scale);
+    const miniPhysical = resolveFurnitureDimensions(fi, cat);
+    const fw = Math.max(2, miniPhysical.width * scale);
+    const fd = Math.max(2, miniPhysical.depth * scale);
     mctx.fillStyle = (fi.color ?? cat.color) + 'aa';
     mctx.save();
     mctx.translate(p.x, p.y);

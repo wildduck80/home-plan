@@ -6,6 +6,7 @@
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
   import { getMaterial } from '$lib/utils/materials';
   import { getCatalogItem } from '$lib/utils/furnitureCatalog';
+  import { resolveFurnitureDimensions, furnitureHalfExtents } from '$lib/domain/furniture';
   import { drawFurnitureIcon } from '$lib/utils/furnitureIcons';
   import { handleGlobalShortcut } from '$lib/utils/shortcuts';
   import ContextMenu from './ContextMenu.svelte';
@@ -1214,8 +1215,7 @@
       if (selFurniture) {
         const cat = getCatalogItem(selFurniture.catalogId);
         if (cat) {
-          const fw = (selFurniture.width ?? cat.width) * Math.abs(selFurniture.scale?.x ?? 1);
-          const fd = (selFurniture.depth ?? cat.depth) * Math.abs(selFurniture.scale?.y ?? 1);
+          const { width: fw, depth: fd } = resolveFurnitureDimensions(selFurniture, cat);
           const fx = selFurniture.position.x;
           const fy = selFurniture.position.y;
           // AABB edges of the furniture (ignoring rotation for simplicity)
@@ -1265,8 +1265,7 @@
           for (const other of otherFurniture) {
             const oCat = getCatalogItem(other.catalogId);
             if (!oCat) continue;
-            const ow = (other.width ?? oCat.width) * Math.abs(other.scale?.x ?? 1);
-            const od = (other.depth ?? oCat.depth) * Math.abs(other.scale?.y ?? 1);
+            const { width: ow, depth: od } = resolveFurnitureDimensions(other, oCat);
             const ox = other.position.x;
             const oy = other.position.y;
             const oLeft = ox - ow / 2;
@@ -1845,7 +1844,7 @@
     let found = false;
     function expand(x: number, y: number) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; found = true; }
     for (const w of currentFloor.walls) { expand(w.start.x, w.start.y); expand(w.end.x, w.end.y); if (w.curvePoint) expand(w.curvePoint.x, w.curvePoint.y); }
-    for (const fi of currentFloor.furniture) { const cat = getCatalogItem(fi.catalogId); if (!cat) continue; const r = Math.hypot((fi.width ?? cat.width) / 2, (fi.depth ?? cat.depth) / 2); expand(fi.position.x - r, fi.position.y - r); expand(fi.position.x + r, fi.position.y + r); }
+    for (const fi of currentFloor.furniture) { const cat = getCatalogItem(fi.catalogId); if (!cat) continue; const { halfWidth, halfDepth } = furnitureHalfExtents(fi, cat); const r = Math.hypot(halfWidth, halfDepth); expand(fi.position.x - r, fi.position.y - r); expand(fi.position.x + r, fi.position.y + r); }
     if (currentFloor.stairs) for (const st of currentFloor.stairs) { expand(st.position.x - st.width / 2, st.position.y - st.depth / 2); expand(st.position.x + st.width / 2, st.position.y + st.depth / 2); }
     if (currentFloor.columns) for (const col of currentFloor.columns) { const r = col.diameter / 2; expand(col.position.x - r, col.position.y - r); expand(col.position.x + r, col.position.y + r); }
     if (!found) return null;
@@ -1900,8 +1899,7 @@
     for (const fi of currentFloor.furniture) {
       const cat = getCatalogItem(fi.catalogId);
       if (!cat) continue;
-      const hw = (fi.width ?? cat.width) / 2;
-      const hd = (fi.depth ?? cat.depth) / 2;
+      const { halfWidth: hw, halfDepth: hd } = furnitureHalfExtents(fi, cat);
       const r = Math.hypot(hw, hd); // conservative radius for rotated items
       expand(fi.position.x - r, fi.position.y - r);
       expand(fi.position.x + r, fi.position.y + r);

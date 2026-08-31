@@ -12,7 +12,7 @@
   import { ProjectLoadError } from '$lib/persistence/schema';
   import SettingsDialog from './SettingsDialog.svelte';
   import AreaSummaryPanel from '$lib/components/sidebar/AreaSummaryPanel.svelte';
-  import { saveState, lastSavedAt, manualSave, initAutoSave } from '$lib/stores/saveStatus';
+  import { saveState, saveError, lastSavedAt, manualSave, initAutoSave } from '$lib/stores/saveStatus';
   import { initVersionHistory, snapshotOnAction } from '$lib/stores/versionHistory';
   import VersionHistoryPanel from './VersionHistoryPanel.svelte';
 
@@ -562,13 +562,15 @@
   </div>
 
   <span
-    class="text-[11px] font-medium transition-all duration-300 max-md:hidden {$saveState === 'saved' ? 'text-emerald-400' : $saveState === 'saving' ? 'text-amber-300 animate-pulse' : 'text-white/50'}"
-    title={lastSavedText || 'Not saved yet'}
+    class="text-[11px] font-medium transition-all duration-300 max-md:hidden {$saveState === 'saved' ? 'text-emerald-400' : $saveState === 'saving' ? 'text-amber-300 animate-pulse' : $saveState === 'error' ? 'text-red-300' : 'text-white/50'}"
+    title={$saveState === 'error' ? ($saveError?.message ?? 'Save failed') : lastSavedText || 'Not saved yet'}
   >
     {#if $saveState === 'saving'}
       Saving…
     {:else if $saveState === 'saved'}
       Saved ✓
+    {:else if $saveState === 'error'}
+      Not saved ⚠
     {:else}
       Unsaved •
     {/if}
@@ -577,6 +579,33 @@
     Save
   </button>
 </div>
+
+<!-- A failed save is the one moment real work can be lost, so it gets a persistent banner
+     with the recovery action attached rather than just a status tint. -->
+{#if $saveError}
+  <div class="bg-red-600 text-white px-4 py-2 flex items-center gap-3 text-sm shrink-0" role="alert">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="shrink-0">
+      <path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="10"/>
+    </svg>
+    <span class="flex-1">{$saveError.message}</span>
+    {#if $saveError.kind === 'quota'}
+      <button
+        onclick={() => exportAsJSON(get(currentProject)!)}
+        class="px-3 py-1 bg-white text-red-700 font-semibold rounded shrink-0 hover:bg-red-50 transition-colors"
+      >
+        Export backup
+      </button>
+    {/if}
+    <button
+      onclick={() => saveError.set(null)}
+      class="text-white/70 hover:text-white shrink-0"
+      title="Dismiss"
+      aria-label="Dismiss save error"
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+{/if}
 
 <SettingsDialog bind:open={settingsOpen} />
 <VersionHistoryPanel bind:open={versionHistoryOpen} />

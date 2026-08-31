@@ -3,30 +3,18 @@ import { detectRooms, getRoomPolygon } from '$lib/utils/roomDetection';
 import { goldenFixtures, getGoldenFixture, type GoldenFixture } from '../fixtures/golden';
 
 /**
- * HP-201 — verify room detection against the golden fixture suite.
+ * HP-201 (verification) and HP-202 (hardening) — room detection against the golden suite.
  *
- * This is a *verification* suite, not a fix: its job is to state precisely which
- * topologies the current detector gets right and which it gets wrong, so HP-202 can be
- * scoped from evidence rather than from the historical bug report.
+ * Every fixture now passes. Two did not when this suite was first written: `crossing-walls`
+ * returned zero rooms and `ten-room-grid` returned 4 rooms of [8, 8, 8, 16] m² instead of 10
+ * of 4 m². Both stemmed from wall splitting only happening at *endpoints* landing on a wall
+ * interior, never at true mid-span crossings — so X-junctions produced no graph vertex and
+ * the faces either side were never separated. Fixed by the second pass in
+ * `splitWallsAtJunctions`; see docs/room-detection-matrix.md.
  *
- * Cases the detector currently fails are declared in `KNOWN_FAILURES` and asserted with
- * `it.fails`, which passes only while the case is genuinely broken. Fixing the detector
- * therefore turns those tests red, forcing the list — and
- * `docs/room-detection-matrix.md` — to be updated. No defect can be quietly fixed or
- * quietly regress.
+ * There are deliberately no exemptions in this suite: a fixture either meets its declared
+ * expectation or the build is red.
  */
-
-/**
- * Root cause (shared by both entries): `splitWallsAtTJunctions` splits a wall only where
- * *another wall's endpoint* lands on its interior. Two walls that cross mid-span create no
- * vertex at their intersection, so the faces on either side are never separated.
- * See docs/room-detection-matrix.md.
- */
-const KNOWN_FAILURES: Readonly<Record<string, string>> = {
-	'crossing-walls': 'X-junctions are not split — detects 0 rooms instead of 4 of 4 m²',
-	'ten-room-grid':
-		'X-junctions are not split — detects 4 rooms of [8, 8, 8, 16] m² instead of 10 of 4 m²'
-};
 
 function detectedAreas(fixture: GoldenFixture): number[] {
 	const floor = fixture.project.floors[fixture.floorIndex];
@@ -41,18 +29,7 @@ function detectedCount(fixture: GoldenFixture): number {
 }
 
 describe('room detection — golden fixtures', () => {
-	const passing = goldenFixtures.filter((f) => !(f.name in KNOWN_FAILURES));
-	const failing = goldenFixtures.filter((f) => f.name in KNOWN_FAILURES);
-
-	it('covers every fixture in exactly one of the two groups', () => {
-		expect(passing.length + failing.length).toBe(goldenFixtures.length);
-		// Guard against a typo in KNOWN_FAILURES silently exempting nothing.
-		for (const name of Object.keys(KNOWN_FAILURES)) {
-			expect(goldenFixtures.map((f) => f.name)).toContain(name);
-		}
-	});
-
-	describe.each(passing.map((f) => [f.name, f] as const))('%s', (_name, fixture) => {
+	describe.each(goldenFixtures.map((f) => [f.name, f] as const))('%s', (_name, fixture) => {
 		it('detects the expected number of rooms', () => {
 			expect(detectedCount(fixture)).toBe(fixture.expected.roomCount);
 		});
@@ -101,34 +78,6 @@ describe('room detection — golden fixtures', () => {
 		});
 	});
 
-	describe.each(failing.map((f) => [f.name, f] as const))(
-		'%s (known defect — HP-202)',
-		(name, fixture) => {
-			it(`is documented: ${KNOWN_FAILURES[name]}`, () => {
-				expect(KNOWN_FAILURES[name]).toBeTruthy();
-			});
-
-			it.fails('detects the expected number of rooms', () => {
-				expect(detectedCount(fixture)).toBe(fixture.expected.roomCount);
-			});
-
-			it.fails('detects the expected room areas', () => {
-				expect(detectedAreas(fixture)).toEqual(fixture.expected.roomAreas);
-			});
-
-			// Pin the exact wrong answer so HP-202 progress is measurable and any *change*
-			// in the defect (rather than a fix) is caught.
-			it('produces the currently recorded wrong result', () => {
-				const actual = { count: detectedCount(fixture), areas: detectedAreas(fixture) };
-
-				if (name === 'crossing-walls') {
-					expect(actual).toEqual({ count: 0, areas: [] });
-				} else {
-					expect(actual).toEqual({ count: 4, areas: [8, 8, 8, 16] });
-				}
-			});
-		}
-	);
 });
 
 describe('room detection — regression characteristics', () => {
@@ -154,6 +103,50 @@ describe('room detection — regression characteristics', () => {
 		);
 
 		expect(detectRooms(gapped)).toHaveLength(1);
+	});
+
+	it('splits X-junctions so crossing walls separate all four quadrants', () => {
+		const fixture = getGoldenFixture('crossing-walls');
+		const rooms = detectRooms(fixture.project.floors[0].walls);
+
+		expect(rooms).toHaveLength(4);
+		expect(rooms.map((r) => r.area)).toEqual([4, 4, 4, 4]);
+		// Both crossing dividers must be shared by more than one quadrant.
+		for (const dividerId of ['v-mid', 'h-mid']) {
+			const claimants = rooms.filter((r) => r.walls.includes(dividerId));
+			expect(claimants.length, `${dividerId} claimants`).toBeGreaterThan(1);
+		}
+	});
+
+	it('scales X-junction handling to a 5x2 grid', () => {
+		const fixture = getGoldenFixture('ten-room-grid');
+		const rooms = detectRooms(fixture.project.floors[0].walls);
+
+		expect(rooms).toHaveLength(10);
+		expect(rooms.every((r) => r.area === 4)).toBe(true);
+	});
+
+	it('does not split parallel or collinear walls', () => {
+		// Two rooms side by side with a shared *collinear* run of walls, no crossings.
+		const fixture = getGoldenFixture('adjacent-two-room');
+		const rooms = detectRooms(fixture.project.floors[0].walls);
+
+		// Spurious splitting of the parallel north/south walls would fragment these faces.
+		expect(rooms).toHaveLength(2);
+	});
+
+	it('treats a crossing that lands on an endpoint as a T-junction, not a double split', () => {
+		// A cross whose horizontal arm terminates exactly at the vertical wall: the meeting
+		// point is an endpoint, so only the T-junction pass should act on it.
+		const walls = [
+			...getGoldenFixture('simple-room').project.floors[0].walls,
+			{ id: 'v', start: { x: 200, y: 0 }, end: { x: 200, y: 300 }, thickness: 15, height: 280, color: '#444' }
+		];
+
+		const rooms = detectRooms(walls);
+
+		expect(rooms).toHaveLength(2);
+		expect(rooms.map((r) => r.area).sort()).toEqual([6, 6]);
 	});
 
 	it('splits T-junctions so two rooms can share one wall', () => {

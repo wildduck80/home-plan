@@ -1,13 +1,13 @@
 # Room Detection Matrix
 
-**Ticket:** HP-201 (verification) — feeds HP-202 (hardening)
+**Tickets:** HP-201 (verification), HP-202 (hardening — X-junction fix landed)
 **Baseline:** upstream `abb5267`, `src/lib/utils/roomDetection.ts`
 **Evidence:** `tests/geometry/roomDetection.test.ts`, fixtures in `tests/fixtures/golden/`
-**Recorded:** 2026-08-31
+**Recorded:** 2026-08-31 · **Updated:** 2026-08-31 (X-junction fix)
 
-Per HP-201, this matrix identifies *exactly* which topologies the current detector handles.
-The implementation plan says not to rewrite the algorithm if all required real-house cases
-pass. Two cases do not pass, and they share one root cause.
+Per HP-201, this matrix identifies *exactly* which topologies the detector handles. Two
+cases failed on first measurement, sharing one root cause; §2 records the defect and the fix.
+All ten fixtures now pass.
 
 ---
 
@@ -23,8 +23,8 @@ pass. Two cases do not pass, and they share one root cause.
 | `stairs-columns` | Room with stair + 2 columns | 1 room, 12 m² | 1 room, 12 m² | **Working** |
 | `openings-heavy` | Room with 3 doors + 4 windows | 1 room, 12 m² | 1 room, 12 m² | **Working** |
 | `furniture-heavy` | Room with 6 furniture items | 1 room, 12 m² | 1 room, 12 m² | **Working** |
-| `crossing-walls` | 400×400, two dividers crossing at centre | 4 rooms, 4 × 4 m² | **0 rooms** | **Broken** |
-| `ten-room-grid` | 1000×400 as a 5×2 grid of 200×200 cells | 10 rooms, 10 × 4 m² | **4 rooms, 8 + 8 + 8 + 16 m²** | **Broken** |
+| `crossing-walls` | 400×400, two dividers crossing at centre | 4 rooms, 4 × 4 m² | 4 rooms, 4 × 4 m² | **Working** (was 0 rooms) |
+| `ten-room-grid` | 1000×400 as a 5×2 grid of 200×200 cells | 10 rooms, 10 × 4 m² | 10 rooms, 10 × 4 m² | **Working** (was 4 rooms) |
 
 Additional verified characteristics:
 
@@ -41,7 +41,10 @@ Additional verified characteristics:
 
 ---
 
-## 2. Defect: X-junctions (crossing walls) are never split
+## 2. Fixed defect: X-junctions (crossing walls) were never split
+
+**Status: fixed.** Recorded in full because the failure mode was severe and silent, and
+because the fix is the kind of thing a future refactor could undo.
 
 ### Root cause
 
@@ -92,18 +95,45 @@ depth of the building and other walls cross it — a spine wall, a corridor wall
 back-to-back room row — hits this. It is exactly the risk the PRD names as *"Room detection
 works for demos but fails for real house"*.
 
-### Suggested fix (HP-202)
+### The fix (HP-202)
 
-Prefer the minimal correction the plan asks for first: extend the splitting step to also
-split at true **segment–segment intersections**, not just endpoint-on-interior hits. Both
-divider walls gain a vertex at the crossing and the existing face traversal should then find
-the quadrants unchanged.
+The minimal correction the plan asks for was sufficient — no DCEL rewrite needed.
+`splitWallsAtTJunctions` is now `splitWallsAtJunctions` and runs a second pass:
 
-Only if that proves unreliable should the half-edge/DCEL rewrite be considered.
+```ts
+// For every pair of walls that properly cross, add the crossing point to *both* walls.
+for (let i = 0; i < walls.length; i++) {
+  for (let j = i + 1; j < walls.length; j++) {
+    const crossing = properCrossing(walls[i], walls[j]);
+    if (!crossing) continue;
+    addSplitPoint(splitWalls[i], crossing.point, crossing.tA);
+    addSplitPoint(splitWalls[j], crossing.point, crossing.tB);
+  }
+}
+```
 
-The regression tests are already written and currently asserted with `it.fails`. Fixing the
-detector will turn them red, which is the signal to flip them to real assertions and update
-this document.
+`properCrossing` returns the intersection only when it lies strictly inside **both**
+segments, using the same `EPSILON` margin as the T-junction pass expressed as a fraction of
+each wall's own length. Three properties matter:
+
+- **Crossings at an endpoint are excluded**, because the T-junction pass already covers them.
+  No wall is split twice at the same point.
+- **Parallel and collinear walls are skipped** — a near-zero cross product means there is no
+  isolated crossing point.
+- **`addSplitPoint` de-duplicates**, so both passes can propose the same point safely.
+
+The existing planar face traversal needed no change: once the vertex exists, it finds the
+quadrants on its own.
+
+Cost is O(n²) in walls per call. Fine at the scale the PRD targets (2–3 floors, ~20 rooms),
+but worth revisiting if plans get much larger, since detection runs on every geometry edit.
+
+### Regression coverage
+
+Beyond both fixtures passing, `tests/geometry/roomDetection.test.ts` pins the properties the
+fix depends on: four quadrants from crossing dividers with both dividers shared by more than
+one room, the 5×2 grid, no spurious splitting of parallel/collinear walls, and a cross that
+terminates on an endpoint still behaving as a T-junction rather than splitting twice.
 
 ---
 
@@ -130,14 +160,16 @@ Current behaviour is pinned by a test so the change is visible when it lands.
 
 ---
 
-## 4. Notes for HP-202
+## 4. Remaining notes
 
+- **Room identity is still unfixed** — see §3. That is the outstanding half of HP-202.
 - `EPSILON = 5` (cm) is a module-local constant serving as both point-equality and snap
   tolerance. HP-204 should move it into shared geometry utilities rather than leaving
   detection to define tolerance for the whole app.
 - The area filter `area < 1000 || area > 10000000` (cm²) silently discards rooms smaller than
   0.1 m² or larger than 1000 m². Worth revisiting: a large open-plan ground floor could
   plausibly approach the upper bound.
-- `getRoomPolygon` re-runs `splitWallsAtTJunctions` independently, so it inherits the same
-  X-junction blind spot. Any fix must cover both, and the shared splitting step is the
-  natural single place to make it.
+- `getRoomPolygon` shares `splitWallsAtJunctions`, so it picked up the X-junction fix for
+  free — which is exactly why the splitting step was the right single place to change it.
+- Detection is O(n²) in wall count per call (§2). Acceptable now; measure before scaling far
+  past the PRD's target project size.

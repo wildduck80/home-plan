@@ -11,6 +11,7 @@
   import MaterialPicker from './MaterialPicker.svelte';
   import { getCatalogItem, furnitureCatalog, furnitureCategories } from '$lib/utils/furnitureCatalog';
   import type { FurnitureDef } from '$lib/utils/furnitureCatalog';
+  import { resolveBaseDimensions } from '$lib/domain/furniture';
   import { createFurnitureModel } from '$lib/utils/furnitureModels3d';
   import { createFurnitureModelWithGLB } from '$lib/utils/furnitureModelLoader';
   import { addFurniture } from '$lib/stores/project';
@@ -1515,13 +1516,13 @@
       if (!cat) continue;
       // Skip 2D-only architectural symbols
       if (cat.symbol) continue;
-      // Create modified catalog definition with overrides
+      // Create modified catalog definition with overrides.
+      // Unscaled on purpose: fi.scale is applied to the Object3D below, so folding it in
+      // here would apply it twice.
       const furnitureDef = {
         ...cat,
         color: fi.color ?? cat.color,
-        width: fi.width ?? cat.width,
-        depth: fi.depth ?? cat.depth,
-        height: fi.height ?? cat.height,
+        ...resolveBaseDimensions(fi, cat),
       };
       const model = createFurnitureModelWithGLB(fi.catalogId, furnitureDef, () => {
         // Re-render when GLB model finishes loading

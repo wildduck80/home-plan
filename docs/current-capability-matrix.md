@@ -35,28 +35,38 @@ Nothing below is marked Working on the strength of the upstream README alone.
 | Future-schema rejection | Working | `test` — `migrations.test.ts` | Actionable message; file left untouched |
 | Save/load round-trip fidelity | Working | `test` — `roundTrip.test.ts`, `goldenFixtures.test.ts` | Byte-identical across all 10 fixtures |
 | JSON export / import | Working | `test` (load path), `none` (file dialog) | Import now shares the load pipeline |
-| localStorage persistence | Partially working | `code` | See §1.1 — quota handling is destructive |
+| localStorage persistence | Working | `test` — `datastore.test.ts` | Quota handling no longer destructive — see §1.1 |
 | Autosave | Not verified | `none` | `stores/saveStatus.ts`; interval logic unexercised |
 | Version history snapshots | Partially working | `code` | Max 10 snapshots, 5-min interval; restore now migrates |
 | IndexedDB storage | Broken | `code` | **Does not exist.** No `indexedDB` reference anywhere in `src/` — HP-105 |
 | Thumbnails | Not verified | `none` | localStorage, one key per project; no quota guard |
 
-### 1.1 localStorage quota handling is destructive
+### 1.1 localStorage quota handling — fixed
 
-`services/datastore.ts` `save()`, on `QuotaExceededError`, **deletes every other project**
-to make room for the current one:
+**Baseline behaviour (removed):** `save()`, on `QuotaExceededError`, **deleted every other
+project** to make room for the current one, telling the user only afterwards, with no export
+offered and no undo:
 
 ```ts
 const minimal: Record<string, string> = {};
-minimal[project.id] = all[project.id];
+minimal[project.id] = all[project.id];          // every other project discarded
 localStorage.setItem(KEY, JSON.stringify(minimal));
 alert('Storage quota exceeded. Other projects were removed to save this one.');
 ```
 
-The user is told after the fact, with no export offered first and no undo. HP-105 explicitly
-requires "no automatic deletion of unrelated projects on quota pressure", and background
-images are stored as inline data URLs, so quota pressure is likely as soon as real plans are
-imported. **Treat as a data-loss risk to fix early**, not merely a storage-tier upgrade.
+**Current behaviour:** on quota exhaustion `save()` prunes only *regenerable* data — cached
+thumbnails, re-captured from the canvas on the next save — retries once, and otherwise throws
+`StorageQuotaError` leaving every stored project untouched. The store no longer calls
+`alert()`; it reports and the UI decides. `saveStatus` surfaces an `error` state and
+`saveError`, and `TopBar` shows a persistent red banner with an **Export backup** action,
+since the in-memory project is still fully recoverable at that point.
+
+This satisfies HP-105's "no automatic deletion of unrelated projects on quota pressure".
+Locked in by `tests/persistence/datastore.test.ts`, which asserts a pre-existing project
+survives a failed save and that the project map is left byte-identical.
+
+Still outstanding: background images remain inline data URLs, so quota pressure is likely
+once real plans are imported. Moving assets to IndexedDB blobs is the rest of HP-105.
 
 ---
 
@@ -70,10 +80,10 @@ imported. **Treat as a data-loss risk to fix early**, not merely a storage-tier 
 | Room detection — corridor topology | Working | `test` | 4 rooms in `hallway-apartment` |
 | Room detection — endpoint gaps ≤ 5 cm | Working | `test` | `EPSILON = 5` |
 | Room detection — outer face suppressed | Working | `test` | Negative signed area skipped |
-| **Room detection — crossing walls (X-junctions)** | **Broken** | `test` | **0 rooms** for a 400×400 four-quadrant plan |
-| **Room detection — 10-room grid** | **Broken** | `test` | 4 rooms instead of 10; same root cause |
-| **Room identity across recalculation** | **Broken** | `test` | Ids are `room-N-${Date.now()}`; names reset to `Room N` |
-| Room polygon extraction | Partially working | `test` | ≥3 vertices on all passing fixtures; shares the X-junction blind spot |
+| Room detection — crossing walls (X-junctions) | Working | `test` | Fixed (HP-202); was **0 rooms** for a 400×400 four-quadrant plan |
+| Room detection — 10-room grid | Working | `test` | Fixed (HP-202); was 4 rooms instead of 10 |
+| **Room identity across recalculation** | **Broken** | `test` | Ids are `room-N-${Date.now()}`; names reset to `Room N`. Outstanding half of HP-202 |
+| Room polygon extraction | Working | `test` | ≥3 vertices on all ten fixtures; shares the fixed splitting step |
 | Wall curves (quadratic bezier) | Not verified | `code` | `curvePoint` persists; detection treats walls as straight |
 | Geometry tolerance utilities | Broken | `code` | Do not exist; `EPSILON` is module-local — HP-204 |
 | Degenerate-geometry guards | Not verified | `none` | No NaN/zero-length validation found — HP-205 |
@@ -88,11 +98,13 @@ Full analysis, root cause and suggested fix: **`docs/room-detection-matrix.md`**
 |---|---|---|---|
 | Catalog placement | Not verified | `none` | `utils/furnitureCatalog.ts` |
 | Per-item dimension overrides persist | Working | `test` — `roundTrip.test.ts` | `width`/`depth`/`height` survive verbatim |
-| Per-item dimensions — 2D footprint | Working | `code` | `canvasRenderer.ts:913` uses `item.width ?? cat.width` |
-| Per-item dimensions — 3D scaling | Working | `code` | `ThreeViewer.svelte:1522` uses `fi.width ?? cat.width` |
-| Per-item dimensions — alignment tools | Working | `code` | `alignment.ts:26` |
-| Per-item dimensions — distance overlay | Working | `code` | `FloorPlanCanvas.svelte:1268` |
-| **Per-item dimensions — hit testing / selection** | **Broken** | `code` | See §3.1 — HP-203 |
+| Per-item dimensions — one shared resolver | Working | `test` — `furniture.test.ts` | `domain/furniture.ts`; see §3.1 |
+| Per-item dimensions — 2D footprint | Working | `code` | Uses `resolveFurnitureDimensions` |
+| Per-item dimensions — 3D scaling | Working | `code` | Uses `resolveBaseDimensions` (scale applied to the Object3D) |
+| Per-item dimensions — alignment tools | Working | `code` | Uses `resolveFurnitureDimensions` |
+| Per-item dimensions — distance overlay | Working | `code` | Uses `resolveFurnitureDimensions` |
+| Per-item dimensions — hit testing / selection | Working | `code` | Fixed (HP-203) — see §3.1 |
+| Per-item dimensions — zoom-to-fit bounds | Working | `code` | Fixed; previously ignored item scale |
 | Collision detection | Broken | `code` | **Does not exist** — HP-601…604 |
 | Clearance zones | Broken | `code` | **Does not exist** — HP-605 |
 | Nearest-distance overlay | Partially working | `code` | Exists, but axis-aligned only — see §3.2 |
@@ -100,25 +112,38 @@ Full analysis, root cause and suggested fix: **`docs/room-detection-matrix.md`**
 | GLB/GLTF user import | Broken | `code` | Loader exists for built-ins; no user import — HP-506 |
 | Favorites / recently used | Not verified | `none` | HP-503 |
 
-### 3.1 Hit testing ignores per-item dimensions (HP-203, confirmed)
+### 3.1 Hit testing ignored per-item dimensions — fixed (HP-203)
 
-`utils/hitTesting.ts` lines 81–82 and 111–112 size the furniture footprint from the
+**Baseline behaviour (removed):** `utils/hitTesting.ts` sized the furniture footprint from the
 **catalog** only:
 
 ```ts
-const hw = cat.width * Math.abs(fi.scale?.x ?? 1) / 2;
+const hw = cat.width * Math.abs(fi.scale?.x ?? 1) / 2;   // ignores fi.width
 const hd = cat.depth * Math.abs(fi.scale?.y ?? 1) / 2;
 ```
 
-Every other consumer resolves `item.width ?? cat.width`. So for any item with a dimension
-override — exactly the items that matter for real house planning — **the clickable area does
-not match the drawn footprint**. Resize a 240 cm wardrobe from a 100 cm catalog default and
-its selectable region stays 100 cm wide.
+Every other consumer resolved `item.width ?? cat.width`, so for any item with a dimension
+override — exactly the items that matter for real house planning — **the clickable area did
+not match the drawn footprint**. A 240 cm wardrobe resized from a 100 cm catalog default
+stayed selectable only across 100 cm.
 
-This confirms the class of bug the PRD anticipated ("furniture dimensions being ignored by
-some snapping/hit-testing logic") and is the concrete justification for HP-203's
-`resolveFurnitureDimensions` helper: five call sites currently re-derive the same value and
-one of them is wrong.
+**Current behaviour:** `src/lib/domain/furniture.ts` is the single resolver all consumers
+share, in two variants:
+
+- `resolveFurnitureDimensions` — overrides **and** item scale applied, for anything reasoning
+  in world coordinates (2D renderer, hit testing, alignment, distance overlay, bounds).
+- `resolveBaseDimensions` — overrides only, for the 3D viewer, which scales the `Object3D`
+  itself and would otherwise apply scale twice.
+
+Both clamp to positive finite values, so a corrupt or zero dimension can no longer produce
+degenerate bounds that make an item unselectable (a slice of HP-205).
+
+Folding six `FloorPlanCanvas` sites into the helper also fixed a latent bug: two
+bounds calculations used for zoom-to-fit were omitting item scale entirely.
+
+19 tests in `tests/domain/furniture.test.ts` cover override precedence, per-axis
+independence, scale composition, negative-scale mirroring, missing catalog entries, and
+rejection of zero/negative/NaN/Infinity dimensions.
 
 ### 3.2 Nearest-distance overlay is axis-aligned only
 
@@ -232,19 +257,26 @@ but it needs that check first, so it is not bundled into the foundation work.
 
 ---
 
-## 9. Summary — the five things to fix first
+## 9. Summary
 
-Ranked by risk to real house data, which is the PRD's stated priority:
+### Fixed since the first audit
 
-1. **Destructive localStorage quota handling** (§1.1) — can silently destroy other projects,
-   and inline data URLs make quota pressure likely. Data loss beats every feature. HP-105.
-2. **X-junction room detection** (§2) — returns *zero* rooms for a plain four-quadrant plan.
-   Blocks accurate modelling of a real house. HP-202.
-3. **Unstable room identity** (§2) — room names and materials cannot survive a geometry edit.
-   HP-202.
-4. **Hit testing ignores per-item dimensions** (§3.1) — resized furniture is not selectable
-   where it is drawn. HP-203.
-5. **HP-005 Three.js lifecycle audit is still open** (§7) — no evidence either way on leaks,
+| Was | Now |
+|---|---|
+| Quota exhaustion deleted every other project (§1.1) | Prunes only regenerable thumbnails, then fails loudly with an export action; stored projects untouched |
+| X-junctions detected **0 rooms** on a four-quadrant plan (§2) | All ten fixtures pass |
+| Hit testing ignored per-item dimensions (§3.1) | One shared resolver across all six consumers |
+
+### Outstanding, ranked by risk to real house data
+
+1. **Assets are inline data URLs** (§1.1) — the destructive path is gone, but quota pressure
+   is still likely once real plans are imported, and a full quota blocks saving. Moving assets
+   to IndexedDB blobs is the rest of **HP-105**.
+2. **Unstable room identity** (§2) — room names, textures and types cannot survive a geometry
+   edit. Outstanding half of **HP-202**.
+3. **HP-005 Three.js lifecycle audit is still open** (§7) — no evidence either way on leaks,
    and repeated 2D/3D switching is a core workflow.
-
-Items 2–4 now have failing-or-pinned regression tests, so progress on them is measurable.
+4. **No E2E harness** (§8) — the reason most of §7 and much of §4 remain `none`. Until this
+   exists, this document cannot honestly upgrade those rows.
+5. **`measure` / `annotate` tools diverge from the `Tool` type** (§8) — needs a runtime check
+   to establish which side is wrong before editing.
