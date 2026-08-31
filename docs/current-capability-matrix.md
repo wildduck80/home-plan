@@ -12,16 +12,17 @@ trustworthy, and it matters as much as the status:
 | Evidence | Meaning |
 |---|---|
 | `test` | Asserted by an automated test in this repo — cited by file |
-| **real browser** | Additionally exercised by driving Chrome against the dev server, with the method and results recorded. Not repeatable in CI until an E2E harness exists |
+| `e2e` | Asserted by a Playwright spec driving a real browser, and re-run in CI |
+| **real browser** | Exercised once by hand against the dev server, with the method and results recorded. Superseded by `e2e` where a spec now covers it |
 | `code` | Verified by reading the implementation; runtime/visual behaviour not exercised |
 | `none` | **Not verified.** Listed because it exists, with no claim about whether it works |
 
 Nothing below is marked Working on the strength of the upstream README alone.
 
-> **Interactive and visual behaviour is largely `none`.** There is no browser-driven test
-> harness yet, so anything whose correctness is visual (rendering fidelity, drag feel,
-> walkthrough, export appearance) is honestly unverified. Closing that gap is the E2E work
-> in PRD §26.3, not something this audit can assert.
+> **Interactive and visual behaviour is largely `none`.** Playwright now covers the storage
+> flow (§1.4), but anything whose correctness is visual — rendering fidelity, drag feel,
+> walkthrough, export appearance — remains honestly unverified. Extending the E2E suite to
+> those flows is the remaining part of PRD §26.3.
 
 ---
 
@@ -36,10 +37,10 @@ Nothing below is marked Working on the strength of the upstream README alone.
 | Future-schema rejection | Working | `test` — `migrations.test.ts` | Actionable message; file left untouched |
 | Save/load round-trip fidelity | Working | `test` — `roundTrip.test.ts`, `goldenFixtures.test.ts` | Byte-identical across all 10 fixtures |
 | JSON export / import | Working | `test` (load path), `none` (file dialog) | Import now shares the load pipeline |
-| IndexedDB persistence (primary) | Working | `test` + **real browser** | Added by HP-105; 12 MB payload stored where localStorage threw — see §1.3 |
+| IndexedDB persistence (primary) | Working | `test` + `e2e` | Added by HP-105; 12 MB payload stored where localStorage threw — see §1.3 |
 | localStorage persistence (fallback) | Working | `test` — `datastore.test.ts` | Used only when IndexedDB is unavailable; quota handling no longer destructive — see §1.1 |
 | Backend selection + fallback | Working | `test` — `storeResolution.test.ts` | `projectStore` facade; degrades to localStorage if IndexedDB is absent or fails to open |
-| localStorage → IndexedDB migration | Working | `test` + **real browser** | Runs once, non-destructive, never overwrites newer records — see §1.3 |
+| localStorage → IndexedDB migration | Working | `test` + `e2e` | Runs once, non-destructive, never overwrites newer records — see §1.3 |
 | Autosave | Not verified | `none` | `stores/saveStatus.ts`; interval logic unexercised |
 | Version history snapshots | Partially working | `code` | Max 10 snapshots, 5-min interval; restore now migrates |
 | Thumbnails | Working | `test` | Own IndexedDB store; treated as derived data, never fatal on failure |
@@ -150,6 +151,52 @@ work behaving as specified on geometry it was not written against.
 Remaining unverified in a real browser: the localStorage **fallback** path, since IndexedDB
 cannot easily be disabled at runtime. Unit-tested only (`storeResolution.test.ts`).
 
+### 1.4 The storage flow is now an E2E suite
+
+The manual pass above proved the storage layer worked *once*. `e2e/storage.spec.ts` is what
+stops it breaking silently: 15 Playwright specs covering database layout, the capacity
+comparison against localStorage, all seven migration properties, the migrated project opening
+and detecting its room, HP-202 metadata survival across a geometry edit, and save/reload.
+
+Run with `npm run test:e2e`. CI runs it as a separate job so the browser download never delays
+feedback from `check`/`test`/`build`.
+
+Two deliberate design choices:
+
+- **Assertions read IndexedDB directly**, not the UI. A read that silently returned nothing
+  would leave the UI looking plausibly empty, so only the stored records prove persistence.
+- **No storage-reset helper.** Playwright gives each test a fresh context with empty storage.
+  Clearing by hand is actively harmful here: `deleteDatabase` can be blocked by the page's own
+  open connection, which leaves the `localStorageMigrated` flag behind and silently skips the
+  very migration under test.
+
+#### Two traps this suite hit, both recorded in the helpers
+
+Worth knowing before extending the suite, because both fail *silently* rather than erroring:
+
+1. **`page.waitForFunction` does not await an async predicate.** It tests the truthiness of the
+   returned value, and a Promise is always truthy, so an `async` condition passes on the first
+   poll regardless. That let assertions run against a database the app had not created yet.
+   Use `expect.poll` instead.
+2. **A versionless `indexedDB.open()` creates the database if absent** — a probe that fabricates
+   the thing it is measuring, then reports zero object stores. Helpers now check
+   `indexedDB.databases()` before opening.
+
+#### Correction: the "dead header button" was a test race, not an app bug
+
+While building this suite the header "New Project" button appeared broken with zero projects:
+the click landed, no handler ran, no error. Native events reached the button and nothing
+overlaid it, so it looked like a Svelte hydration defect.
+
+It was not. Running the case five times showed it passing 4/5 — it only failed on a cold Vite
+compile. **SvelteKit server-renders the markup, so a button is present, visible and
+"actionable" to Playwright before any JavaScript has attached behaviour.** Clicking in that
+window is swallowed with no error. The `waitForHydration` helper closes it by waiting for a
+dynamic import of an app module to resolve.
+
+Recorded because the failure mode is invisible on warm runs, so it will recur for anyone adding
+UI-driven specs — and because the first diagnosis was confidently wrong.
+
 ---
 
 ## 2. Geometry
@@ -164,8 +211,8 @@ cannot easily be disabled at runtime. Unit-tested only (`storeResolution.test.ts
 | Room detection — outer face suppressed | Working | `test` | Negative signed area skipped |
 | Room detection — crossing walls (X-junctions) | Working | `test` | Fixed (HP-202); was **0 rooms** for a 400×400 four-quadrant plan |
 | Room detection — 10-room grid | Working | `test` | Fixed (HP-202); was 4 rooms instead of 10 |
-| Room ids stable across recalculation | Working | `test` — `roomIdentity.test.ts` | Fixed (HP-202); derived from the boundary wall set, was clock-based |
-| Authored room metadata survives geometry edits | Working | `test` — `rooms.test.ts` | Fixed (HP-202); all five authored fields, was three — see §2.1 |
+| Room ids stable across recalculation | Working | `test` + `e2e` | Fixed (HP-202); derived from the boundary wall set, was clock-based |
+| Authored room metadata survives geometry edits | Working | `test` + `e2e` | Fixed (HP-202); all five authored fields, was three — see §2.1 |
 | Legacy room ids adopted from disk | Working | `test` — `roomIdentity.test.ts` | Pre-HP-202 clock ids matched by wall set and kept |
 | Room polygon extraction | Working | `test` | ≥3 vertices on all ten fixtures; shares the fixed splitting step |
 | Wall curves (quadratic bezier) | Not verified | `code` | `curvePoint` persists; detection treats walls as straight |
@@ -338,7 +385,7 @@ measuring once real multi-floor houses with background images exist.
 | `svelte-check` | Partially working | 6 errors, 25 warnings — all 6 from one cause, below |
 | Unit test runner | Working | Vitest; 184 tests |
 | CI | Working | GitHub Actions: check (no-regression), test, build |
-| E2E tests | Broken | Do not exist — the reason so much above is `none` |
+| E2E tests | Partially working | Playwright configured; 15 specs cover the storage flow (`e2e/storage.spec.ts`). Editor, 3D, walkthrough and export flows still uncovered |
 | Ad-hoc root test scripts | Partially working | `test-room-polygons.ts`, `test-orthogonal.ts`, `test-furniture-rotation.ts` are `npx tsx` scripts that print to stdout — not runnable in CI. Worth porting into the Vitest suite alongside HP-201. |
 
 ### The 6 `svelte-check` errors
@@ -371,18 +418,17 @@ but it needs that check first, so it is not bundled into the foundation work.
 
 ### Outstanding, ranked by risk to real house data
 
-1. **No E2E harness** (§8) — the storage layer has now been verified in a real browser once,
-   by hand (§1.3), but nothing re-checks it on future changes. Converting that manual pass into
-   a Playwright suite is the single highest-value remaining item: it protects the work already
-   done and unblocks every `none` row below.
-2. **HP-005 Three.js lifecycle audit is still open** (§7) — no evidence either way on leaks,
-   and repeated 2D/3D switching is a core workflow.
-3. **Rendering, walkthrough and export behaviour is unverified** (§7) — all `none`, blocked on
-   item 1.
-4. **Assets remain inline in the project record** (§1.2) — a load-performance concern rather
+1. **HP-005 Three.js lifecycle audit is still open** (§7) — no evidence either way on leaks,
+   and repeated 2D/3D switching is a core workflow. Now the top item, and newly tractable: the
+   E2E harness can drive repeated 2D/3D switches and sample `renderer.info` for unbounded growth.
+2. **Rendering, walkthrough and export behaviour is unverified** (§7) — all `none`. The harness
+   exists now, so these are extendable rather than blocked.
+3. **Assets remain inline in the project record** (§1.2) — a load-performance concern rather
    than a data-loss one, since capacity is no longer the constraint.
-5. **`measure` / `annotate` tools diverge from the `Tool` type** (§8) — needs a runtime check
-   to establish which side is wrong before editing.
+4. **`measure` / `annotate` tools diverge from the `Tool` type** (§8) — needs a runtime check
+   to establish which side is wrong before editing. The E2E harness can now supply that check.
+5. **The localStorage fallback path is unverified in a real browser** (§1.3) — IndexedDB cannot
+   easily be disabled at runtime; unit-tested only.
 
 ### Minor observations from the real-browser pass
 

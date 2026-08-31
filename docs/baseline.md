@@ -91,6 +91,7 @@ awkward edge cases.
 | `vitest` | dev | HP-002 | Test runner; shares Vite's resolution so `$lib` works unchanged |
 | `idb` | runtime | HP-105 | Promise wrapper for IndexedDB; transaction lifetimes are subtle enough to be worth a maintained library |
 | `fake-indexeddb` | dev | HP-105 | Spec-faithful IndexedDB in Node, so storage tests need no browser |
+| `@playwright/test` | dev | PRD §26.3 | E2E in a real browser; the framework the PRD specifies |
 
 ---
 
@@ -100,10 +101,12 @@ Requires Node 20 or newer.
 
 ```bash
 npm install
-npm run check    # svelte-kit sync + svelte-check
-npm run build    # production build
-npm run dev      # dev server on http://localhost:5173
-npm test         # unit tests (added in HP-002)
+npx playwright install chromium   # once, for E2E
+npm run check      # svelte-kit sync + svelte-check
+npm run build      # production build
+npm run dev        # dev server on http://localhost:5173
+npm test           # unit tests (added in HP-002)
+npm run test:e2e   # end-to-end tests (added alongside HP-105 verification)
 ```
 
 ### Baseline verification results

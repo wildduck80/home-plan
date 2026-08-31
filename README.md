@@ -103,24 +103,34 @@ npm run preview
 ### Tests and checks
 
 ```bash
-npm test           # unit + integration tests (Vitest)
-npm run test:watch # watch mode
-npm run check      # svelte-check type checking
+npm test            # unit + integration tests (Vitest)
+npm run test:watch  # watch mode
+npm run test:e2e    # end-to-end tests (Playwright, real browser)
+npm run test:e2e:ui # E2E in Playwright's interactive UI
+npm run check       # svelte-check type checking
 ```
 
 Geometry and persistence suites run without a renderer or a dev server, so they are fast and
-usable in CI.
+usable in CI. E2E specs live in `e2e/` and drive a real Chromium against the app; Playwright
+starts its own dev server, so no manual setup is needed. First run requires the browser:
+
+```bash
+npx playwright install chromium
+```
 
 ### Continuous integration
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request to
 `main`:
 
-| Step | Gate |
-|---|---|
-| `npm run check` | Fails if the `svelte-check` error count rises above the recorded baseline |
-| `npm test` | Must pass |
-| `npm run build` | Must pass |
+| Job | Step | Gate |
+|---|---|---|
+| `verify` | `npm run check` | Fails if the `svelte-check` error count rises above the recorded baseline |
+| `verify` | `npm test` | Must pass |
+| `verify` | `npm run build` | Must pass |
+| `e2e` | `npm run test:e2e` | Must pass; report uploaded as an artifact on failure |
+
+`e2e` is a separate job so downloading a browser never delays feedback from the fast checks.
 
 The type-check step compares against a baseline rather than requiring zero errors, because
 6 pre-existing errors are inherited from upstream — see
