@@ -12,6 +12,7 @@ trustworthy, and it matters as much as the status:
 | Evidence | Meaning |
 |---|---|
 | `test` | Asserted by an automated test in this repo — cited by file |
+| **real browser** | Additionally exercised by driving Chrome against the dev server, with the method and results recorded. Not repeatable in CI until an E2E harness exists |
 | `code` | Verified by reading the implementation; runtime/visual behaviour not exercised |
 | `none` | **Not verified.** Listed because it exists, with no claim about whether it works |
 
@@ -35,10 +36,10 @@ Nothing below is marked Working on the strength of the upstream README alone.
 | Future-schema rejection | Working | `test` — `migrations.test.ts` | Actionable message; file left untouched |
 | Save/load round-trip fidelity | Working | `test` — `roundTrip.test.ts`, `goldenFixtures.test.ts` | Byte-identical across all 10 fixtures |
 | JSON export / import | Working | `test` (load path), `none` (file dialog) | Import now shares the load pipeline |
-| IndexedDB persistence (primary) | Working | `test` — `idbStore.test.ts` | Added by HP-105; verified against `fake-indexeddb`, incl. a 6 MB project |
+| IndexedDB persistence (primary) | Working | `test` + **real browser** | Added by HP-105; 12 MB payload stored where localStorage threw — see §1.3 |
 | localStorage persistence (fallback) | Working | `test` — `datastore.test.ts` | Used only when IndexedDB is unavailable; quota handling no longer destructive — see §1.1 |
 | Backend selection + fallback | Working | `test` — `storeResolution.test.ts` | `projectStore` facade; degrades to localStorage if IndexedDB is absent or fails to open |
-| localStorage → IndexedDB migration | Working | `test` — `idbStore.test.ts` | Runs once, non-destructive, never overwrites newer IndexedDB records |
+| localStorage → IndexedDB migration | Working | `test` + **real browser** | Runs once, non-destructive, never overwrites newer records — see §1.3 |
 | Autosave | Not verified | `none` | `stores/saveStatus.ts`; interval logic unexercised |
 | Version history snapshots | Partially working | `code` | Max 10 snapshots, 5-min interval; restore now migrates |
 | Thumbnails | Working | `test` | Own IndexedDB store; treated as derived data, never fatal on failure |
@@ -98,11 +99,56 @@ images and custom entourage PNGs into a dedicated blob store needs a schema vers
 asset resolution at render time. With IndexedDB's capacity that is now a load-performance
 optimisation rather than a data-loss fix, so it is deliberately deferred.
 
-**Verification gap:** the IndexedDB suite runs against `fake-indexeddb`, a faithful
-spec implementation, and both routes were confirmed to render server-side without an
-`indexedDB is not defined` SSR failure. Behaviour in a *real* browser — structured clone of
-the stored records, actual quota behaviour under pressure — is **not yet verified**; the Chrome
-extension was unavailable when this landed.
+### 1.3 Real-browser verification (Chrome, 2026-08-31)
+
+The automated suites run against `fake-indexeddb`. The following was additionally verified by
+driving a real Chrome instance against the dev server, because this code holds the user's
+houses and a spec emulator cannot prove structured clone or actual quota behaviour.
+
+**Method:** wiped IndexedDB, seeded `localStorage` exactly as the pre-HP-105 build would have
+(a project whose floor omitted 10 of its 12 collections, plus a thumbnail), then loaded the app
+cold so the migration ran for real.
+
+| Check | Result |
+|---|---|
+| Database created with expected layout | `openplan3d` v1; stores `projects`, `thumbnails`, `meta`; `updatedAt` index present |
+| Legacy project migrated and listed | "Legacy Bungalow" in the project list with the correct `updatedAt` (02/02/2026) |
+| v1 → v2 schema migration applied | Stored record carries `schemaVersion: 2` |
+| Floor collections backfilled (HP-102) | All 12 present as arrays; the legacy floor supplied only `walls` and `doors` |
+| Element ids and references preserved | Wall ids `w-n/w-e/w-s/w-w` intact; door still `wallId: 'w-s'` |
+| Thumbnail migrated | Present in the `thumbnails` store |
+| Migration flag written | `meta` holds `localStorageMigrated` |
+| **localStorage left intact** | Both the project map and the thumbnail key still present after migration |
+| Project opens and renders | 4 walls, door with swing arc, `Room 1 (12.0 m²)` — matches the golden-fixture expectation for 400×300 cm |
+| Edit → save → reload persists | Wall length 300→400 cm, save, full reload: geometry and metadata all intact |
+| Console | Clean across three page loads; no errors, no `DataCloneError` |
+
+**Capacity — the premise of HP-105, measured rather than assumed.** With a 12 MB payload:
+
+| Backend | Result |
+|---|---|
+| `localStorage.setItem` | **rejected — `QuotaExceededError`** |
+| IndexedDB | stored, read back byte-identical (12,582,934 chars), `locked` flag survived structured clone |
+
+`navigator.storage.estimate()` reported a **10,241 MB** quota against 0.6 MB in use — roughly
+2000x the localStorage origin cap. The old build would have failed this write outright.
+
+**HP-202 confirmed in the real app.** Set three authored fields on the migrated room (name,
+colour, floor texture), then changed the east wall's length from 300 to 400 cm. The persisted
+room afterwards:
+
+```json
+{ "id": "room-p94vmu", "name": "MasterBedroom", "color": "#f4c2c2",
+  "floorTexture": "walnut", "area": 12, "walls": ["w-n","w-e","w-s","w-w"] }
+```
+
+Geometry changed (`w-e.end.y` 300 → 400) while all three authored fields survived under a
+stable derived id. The area correctly stayed 12 m²: the south wall's endpoint now lands on the
+east wall's interior, so T-junction splitting still closes the original loop — the X/T-junction
+work behaving as specified on geometry it was not written against.
+
+Remaining unverified in a real browser: the localStorage **fallback** path, since IndexedDB
+cannot easily be disabled at runtime. Unit-tested only (`storeResolution.test.ts`).
 
 ---
 
@@ -325,14 +371,29 @@ but it needs that check first, so it is not bundled into the foundation work.
 
 ### Outstanding, ranked by risk to real house data
 
-1. **No real-browser verification of the storage layer** (§1.2) — the IndexedDB suite runs
-   against `fake-indexeddb` only. This is the highest-value gap now, because it covers the code
-   that holds the user's houses.
+1. **No E2E harness** (§8) — the storage layer has now been verified in a real browser once,
+   by hand (§1.3), but nothing re-checks it on future changes. Converting that manual pass into
+   a Playwright suite is the single highest-value remaining item: it protects the work already
+   done and unblocks every `none` row below.
 2. **HP-005 Three.js lifecycle audit is still open** (§7) — no evidence either way on leaks,
    and repeated 2D/3D switching is a core workflow.
-3. **No E2E harness** (§8) — the reason most of §7 and much of §4 remain `none`, and the
-   reason item 1 exists. Until this lands, this document cannot honestly upgrade those rows.
-4. **Assets remain inline in the project record** (§1.2) — now a load-performance concern
-   rather than a data-loss one, since capacity is no longer the constraint.
+3. **Rendering, walkthrough and export behaviour is unverified** (§7) — all `none`, blocked on
+   item 1.
+4. **Assets remain inline in the project record** (§1.2) — a load-performance concern rather
+   than a data-loss one, since capacity is no longer the constraint.
 5. **`measure` / `annotate` tools diverge from the `Tool` type** (§8) — needs a runtime check
    to establish which side is wrong before editing.
+
+### Minor observations from the real-browser pass
+
+Noted rather than fixed, since neither affects data and both need reproduction before a change:
+
+- The canvas swallows the **spacebar** while the Room Name field in the properties panel has
+  focus, so "Master Bedroom" was saved as "MasterBedroom". Likely a global shortcut handler
+  not checking whether focus is in a text input.
+- The inline room-name editor drawn on the canvas (opened by double-clicking a room label)
+  **persisted after `Escape` and after clicking elsewhere**, leaving a stale overlay until the
+  page reloaded.
+- After reload, the room rendered with its colour but the `walnut` floor texture did not appear,
+  despite being correct in storage. Possibly lazy texture loading rather than a defect — not
+  investigated.
