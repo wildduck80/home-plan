@@ -546,8 +546,34 @@ export function getFloorTextureCanvas(materialId: string): HTMLCanvasElement | n
 
 /** Callback to invoke when a photo texture finishes loading (triggers re-render) */
 const textureLoadCallbacks: Set<() => void> = new Set();
-function notifyTextureLoad() { for (const cb of textureLoadCallbacks) cb(); }
+
+function notifyTextureLoad() {
+  // Copy first: a callback may unregister itself (or another) while we iterate.
+  for (const cb of [...textureLoadCallbacks]) {
+    try {
+      cb();
+    } catch (e: unknown) {
+      // One broken subscriber must not stop the others from re-rendering.
+      console.error('[TextureGenerator] texture-load callback failed', e);
+    }
+  }
+}
+
+/**
+ * Register a callback for when a photo texture finishes loading.
+ *
+ * Callers **must** pair this with `removeTextureLoadCallback` on teardown. Without it the set
+ * grows on every component mount, and each stale entry keeps a destroyed component's closure
+ * alive — so a later texture load calls back into components whose renderer is already gone
+ * (HP-005).
+ */
 export function setTextureLoadCallback(cb: () => void) { textureLoadCallbacks.add(cb); }
+
+/** Unregister a callback previously passed to `setTextureLoadCallback`. */
+export function removeTextureLoadCallback(cb: () => void) { textureLoadCallbacks.delete(cb); }
+
+/** Number of registered callbacks. Exposed so leak tests can assert it stays bounded. */
+export function textureLoadCallbackCount(): number { return textureLoadCallbacks.size; }
 
 export function getWallTextureCanvas(textureId: string, color: string): HTMLCanvasElement | null {
   // Try photo texture first

@@ -12,7 +12,7 @@
   import { handleGlobalShortcut } from '$lib/utils/shortcuts';
   import ContextMenu from './ContextMenu.svelte';
   import { roomPresets, placePreset } from '$lib/utils/roomPresets';
-  import { getWallTextureCanvas, getFloorTextureCanvas, setTextureLoadCallback } from '$lib/utils/textureGenerator';
+  import { getWallTextureCanvas, getFloorTextureCanvas } from '$lib/utils/textureGenerator';
   import { projectSettings, formatLength, formatArea } from '$lib/stores/settings';
   import type { ProjectSettings } from '$lib/stores/settings';
   import type { CanvasState } from '$lib/utils/canvasInteraction';
@@ -1734,8 +1734,9 @@
   onMount(() => {
     ctx = canvas.getContext('2d')!;
     resize();
-    // Re-render when photo textures finish loading
-    setTextureLoadCallback(() => { /* draw loop is already running via rAF */ });
+    // No texture-load subscription here: this canvas already redraws continuously via its own
+    // rAF loop, so the callback had an empty body. Registering one per mount only accumulated
+    // dead closures in the registry, since it was never unregistered (HP-005).
     const resizeObs = new ResizeObserver(resize);
     resizeObs.observe(canvas.parentElement!);
     requestAnimationFrame(draw);

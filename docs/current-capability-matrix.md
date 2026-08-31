@@ -368,7 +368,7 @@ measuring once real multi-floor houses with background images exist.
 | Walkthrough mode | Not verified | `none` | Visual |
 | Elevation view | Not verified | `none` | Visual |
 | Materials / textures | Not verified | `none` | `utils/materials.ts` |
-| Three.js resource disposal | Not verified | `none` | **HP-005 not yet done** — no leak claim either way |
+| Three.js resource disposal | Working | `e2e` | HP-005 done; two unbounded leaks found and fixed — see §7.1 |
 | Rendering quality presets | Broken | `code` | Not found — HP-803 |
 | Eye-height presets | Broken | `code` | Not found — HP-805 |
 | PNG / SVG / PDF / DXF export | Not verified | `none` | Implemented in `export.ts`, `cadExport.ts`; output never inspected |
@@ -376,6 +376,62 @@ measuring once real multi-floor houses with background images exist.
 | Print layout | Not verified | `none` | |
 
 ---
+
+### 7.1 Three.js lifecycle audit (HP-005) — two unbounded leaks found and fixed
+
+Measured, not inspected. `e2e/threeLifecycle.spec.ts` is the repeatable procedure the ticket
+asked for; it uses Three's own `__THREE_DEVTOOLS__` hook to capture renderers, so no test-only
+code ships in `src/`.
+
+| Metric | Before | After |
+|---|---|---|
+| Textures over 24 scene rebuilds | 32 → 182 → **332** | 20 → 20 → **20** |
+| Geometries over 24 rebuilds | flat at 18 | flat at 18 |
+| WebGL contexts after 10 view toggles | 12 created, **12 live** | 12 created, **2 live** |
+| Texture-load subscribers after 10 toggles | **11** | 1 |
+
+#### Leak 1 — textures were never disposed
+
+`material.dispose()` **does not dispose the textures a material references.** The old
+`clearGroup` disposed geometry and material only, so every rebuild abandoned its textures on the
+GPU: ~12.5 per rebuild, growing linearly and without bound. Geometry counts stayed flat, which
+is why inspection alone would likely have missed it.
+
+This compounded badly because `activeFloor.subscribe` triggers `rebuildScene()` on *every*
+project mutation — so dragging a wall in 3D leaked textures continuously, not just on floor
+switches. The baseline count also dropped 32 → 20, meaning textures leaked during initial setup
+too.
+
+Fixed by `src/lib/utils/threeDisposal.ts`, which disposes any texture-valued property by
+iterating the material's own properties rather than naming `map`/`normalMap`/… — so it stays
+correct for material types it has never heard of.
+
+#### Leak 2 — WebGL contexts were never released
+
+Switching to 2D **unmounts** the viewer (`{#if mode === '2d'}…{:else}`), so each toggle
+constructs a new `WebGLRenderer`. Teardown called `renderer.dispose()`, which frees Three's
+caches but **leaves the WebGL context alive**. All 12 contexts from 10 toggles stayed live.
+
+Browsers cap live contexts at roughly 16, so this was on track to break the 3D view outright
+after ~15 view switches in a session. `disposeRenderer` now calls `forceContextLoss()` and
+detaches the canvas.
+
+#### Leak 3 — texture-load subscribers accumulated
+
+`textureLoadCallbacks` was a `Set` with **no unregister function at all**. Every viewer mount
+added a closure that was never removed, so after 10 toggles a texture load would call
+`rebuildScene()` on 10 destroyed components. Added `removeTextureLoadCallback`, called from
+teardown, and `notifyTextureLoad` now iterates a copy and isolates subscriber errors.
+
+`FloorPlanCanvas` also registered one per mount — with an **empty body**, since that canvas
+already redraws via its own rAF loop. Removed rather than unregistered: it did nothing but leak.
+
+#### Incidental finding, not a defect
+
+The 3D render loop is deliberately **on-demand** — `renderer.render()` runs only when the scene
+is marked dirty. An idle frame counter therefore stays put, which initially looked like a
+stalled loop. Recorded because it will mislead the next person writing a rendering assertion;
+the spec now provokes a change rather than expecting frames while idle.
 
 ## 8. Tooling and known type debt
 
@@ -385,7 +441,7 @@ measuring once real multi-floor houses with background images exist.
 | `svelte-check` | Partially working | 6 errors, 25 warnings — all 6 from one cause, below |
 | Unit test runner | Working | Vitest; 184 tests |
 | CI | Working | GitHub Actions: check (no-regression), test, build |
-| E2E tests | Partially working | Playwright configured; 15 specs cover the storage flow (`e2e/storage.spec.ts`). Editor, 3D, walkthrough and export flows still uncovered |
+| E2E tests | Partially working | Playwright configured; 22 specs cover the storage flow and Three.js lifecycle. Rendering fidelity, walkthrough and export still uncovered |
 | Ad-hoc root test scripts | Partially working | `test-room-polygons.ts`, `test-orthogonal.ts`, `test-furniture-rotation.ts` are `npx tsx` scripts that print to stdout — not runnable in CI. Worth porting into the Vitest suite alongside HP-201. |
 
 ### The 6 `svelte-check` errors
@@ -411,6 +467,8 @@ but it needs that check first, so it is not bundled into the foundation work.
 | Was | Now |
 |---|---|
 | Quota exhaustion deleted every other project (§1.1) | Prunes only regenerable thumbnails, then fails loudly with an export action; stored projects untouched |
+| Scene rebuilds leaked ~12.5 GPU textures each, unbounded (§7.1) | Flat across 24 rebuilds; shared disposal helper disposes textures too |
+| WebGL contexts never released — 3D view would break after ~15 view toggles (§7.1) | Contexts released on unmount; 2 live after 10 toggles |
 | X-junctions detected **0 rooms** on a four-quadrant plan (§2) | All ten fixtures pass |
 | Hit testing ignored per-item dimensions (§3.1) | One shared resolver across all six consumers |
 | Room reconciliation needed exact wall-set equality and dropped 3 of 5 authored fields (§2.1) | Similarity matching in a tested domain module; all authored fields carried |
@@ -418,17 +476,18 @@ but it needs that check first, so it is not bundled into the foundation work.
 
 ### Outstanding, ranked by risk to real house data
 
-1. **HP-005 Three.js lifecycle audit is still open** (§7) — no evidence either way on leaks,
-   and repeated 2D/3D switching is a core workflow. Now the top item, and newly tractable: the
-   E2E harness can drive repeated 2D/3D switches and sample `renderer.info` for unbounded growth.
-2. **Rendering, walkthrough and export behaviour is unverified** (§7) — all `none`. The harness
-   exists now, so these are extendable rather than blocked.
-3. **Assets remain inline in the project record** (§1.2) — a load-performance concern rather
+1. **Rendering, walkthrough and export behaviour is unverified** (§7) — all `none`. The harness
+   exists, so these are extendable rather than blocked. Highest remaining verification gap.
+2. **Assets remain inline in the project record** (§1.2) — a load-performance concern rather
    than a data-loss one, since capacity is no longer the constraint.
-4. **`measure` / `annotate` tools diverge from the `Tool` type** (§8) — needs a runtime check
+3. **`measure` / `annotate` tools diverge from the `Tool` type** (§8) — needs a runtime check
    to establish which side is wrong before editing. The E2E harness can now supply that check.
-5. **The localStorage fallback path is unverified in a real browser** (§1.3) — IndexedDB cannot
+4. **The localStorage fallback path is unverified in a real browser** (§1.3) — IndexedDB cannot
    easily be disabled at runtime; unit-tested only.
+
+With HP-005 closed, EPIC 0-2 foundation work is complete apart from HP-204/205 (shared geometry
+tolerances and degenerate-geometry guards), which are best folded into HP-303/HP-401 when those
+touch tolerance-sensitive geometry.
 
 ### Minor observations from the real-browser pass
 

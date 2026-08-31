@@ -17,7 +17,8 @@
   import { addFurniture } from '$lib/stores/project';
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
   import { getMaterial } from '$lib/utils/materials';
-  import { getWallTextureCanvas, getFloorTextureCanvas, setTextureLoadCallback } from '$lib/utils/textureGenerator';
+  import { getWallTextureCanvas, getFloorTextureCanvas, setTextureLoadCallback, removeTextureLoadCallback } from '$lib/utils/textureGenerator';
+  import { clearGroup, disposeObject3D, disposeScene, disposeRenderer } from '$lib/utils/threeDisposal';
 
   let container: HTMLDivElement;
   let renderer: THREE.WebGLRenderer;
@@ -156,7 +157,9 @@
     if (cameraHelper) cameraHelper.visible = true;
     setSpritesVisible(true);
     const dataUrl = offRenderer.domElement.toDataURL('image/png');
-    offRenderer.dispose();
+    // Release the context too, not just Three's caches — these are extra contexts
+    // against the browser's ~16 limit for as long as they live (HP-005).
+    disposeRenderer(offRenderer);
     return dataUrl;
   }
 
@@ -475,7 +478,9 @@
     if (cameraXrayWalls) setWallsXray(false);
 
     const dataUrl = offRenderer.domElement.toDataURL('image/png');
-    offRenderer.dispose();
+    // Release the context too, not just Three's caches — these are extra contexts
+    // against the browser's ~16 limit for as long as they live (HP-005).
+    disposeRenderer(offRenderer);
 
     // Download
     const link = document.createElement('a');
@@ -947,13 +952,7 @@
   function removeGhostPreview() {
     if (ghostGroup) {
       scene.remove(ghostGroup);
-      ghostGroup.traverse((obj: any) => {
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) {
-          if (Array.isArray(obj.material)) obj.material.forEach((m: any) => m.dispose());
-          else obj.material.dispose();
-        }
-      });
+      disposeObject3D(ghostGroup);
       ghostGroup = null;
     }
   }
@@ -1137,19 +1136,10 @@
     }
   }
 
-  function clearGroup(group: THREE.Group) {
-    while (group.children.length) {
-      const child = group.children[0];
-      child.traverse((obj: any) => {
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) {
-          if (Array.isArray(obj.material)) obj.material.forEach((m: any) => m.dispose());
-          else obj.material.dispose();
-        }
-      });
-      group.remove(child);
-    }
-  }
+  // clearGroup now lives in $lib/utils/threeDisposal, which also disposes the *textures* each
+  // material references. The previous local version disposed only geometry and material, and
+  // material.dispose() leaves its textures on the GPU — the scene rebuilds on every project
+  // mutation, so that leaked ~12.5 textures per rebuild without bound (HP-005).
 
   function buildWalls(floor: Floor) {
     clearGroup(wallGroup);
@@ -2108,10 +2098,13 @@
     init();
     animate();
 
-    // Rebuild 3D scene when photo textures finish loading
-    setTextureLoadCallback(() => {
+    // Rebuild 3D scene when photo textures finish loading. Held in a named reference so
+    // teardown can unregister it — otherwise every mount leaves a closure behind that a later
+    // texture load would invoke against a destroyed renderer (HP-005).
+    const onTextureLoad = () => {
       if (currentFloor) rebuildScene();
-    });
+    };
+    setTextureLoadCallback(onTextureLoad);
 
     const resizeObs = new ResizeObserver(onResize);
     resizeObs.observe(container);
@@ -2168,10 +2161,17 @@
       unsub();
       unsubRooms();
       unsubSel();
+      removeTextureLoadCallback(onTextureLoad);
       cancelAnimationFrame(animId);
       document.removeEventListener('keydown', onKeyDown, false);
       document.removeEventListener('keyup', onKeyUp, false);
-      renderer.dispose();
+
+      // Switching to 2D unmounts this component, so a session's worth of view toggles creates a
+      // renderer per mount. renderer.dispose() alone leaves the WebGL context alive and browsers
+      // cap those at roughly 16 — past that the 3D view stops working. disposeRenderer releases
+      // the context; disposeScene frees the geometries, materials and textures the scene holds.
+      if (scene) disposeScene(scene);
+      if (renderer) disposeRenderer(renderer);
     };
   });
 </script>
