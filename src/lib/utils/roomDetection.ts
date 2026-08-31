@@ -1,4 +1,5 @@
 import type { Wall, Point, Room } from '$lib/models/types';
+import { deriveRoomId } from '$lib/domain/rooms';
 
 const EPSILON = 5; // snap distance for matching endpoints
 
@@ -293,7 +294,10 @@ export function detectRooms(walls: Wall[]): Room[] {
 
       roomCount++;
       rooms.push({
-        id: `room-${roomCount}-${Date.now()}`,
+        // Derived from the boundary, not the clock or the loop counter, so re-detecting an
+        // unchanged room yields the same id. Authored metadata is reattached separately by
+        // reconcileDetectedRooms — see src/lib/domain/rooms.ts (HP-202).
+        id: deriveRoomId(uniqueWalls),
         name: `Room ${roomCount}`,
         walls: uniqueWalls,
         floorTexture: 'hardwood',

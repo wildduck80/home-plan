@@ -1,13 +1,14 @@
 # Room Detection Matrix
 
-**Tickets:** HP-201 (verification), HP-202 (hardening — X-junction fix landed)
+**Tickets:** HP-201 (verification), HP-202 (hardening — complete)
 **Baseline:** upstream `abb5267`, `src/lib/utils/roomDetection.ts`
-**Evidence:** `tests/geometry/roomDetection.test.ts`, fixtures in `tests/fixtures/golden/`
-**Recorded:** 2026-08-31 · **Updated:** 2026-08-31 (X-junction fix)
+**Evidence:** `tests/geometry/roomDetection.test.ts`, `tests/geometry/roomIdentity.test.ts`,
+`tests/domain/rooms.test.ts`, fixtures in `tests/fixtures/golden/`
+**Recorded:** 2026-08-31 · **Updated:** 2026-08-31 (X-junction fix, then room identity)
 
 Per HP-201, this matrix identifies *exactly* which topologies the detector handles. Two
-cases failed on first measurement, sharing one root cause; §2 records the defect and the fix.
-All ten fixtures now pass.
+cases failed on first measurement (§2) and room identity was unstable (§3). Both are fixed;
+all ten fixtures pass and HP-202's acceptance criteria are met.
 
 ---
 
@@ -137,32 +138,84 @@ terminates on an endpoint still behaving as a T-junction rather than splitting t
 
 ---
 
-## 3. Defect: room identity is not stable across recalculation
+## 3. Fixed defect: room identity across recalculation
 
-`detectRooms` mints ids from the loop counter and the clock (`roomDetection.ts:228`):
+**Status: fixed.**
+
+### What was wrong
+
+Two separate problems, and the first audit conflated them. Being precise matters, because the
+user-visible impact was narrower than "identity is always lost":
+
+**(a) `detectRooms` ids were clock-based.** `roomDetection.ts` minted
+`` id: `room-${roomCount}-${Date.now()}` ``, so identity depended on wall iteration order and
+the current time rather than the geometry.
+
+**(b) The app-layer reconciliation was too narrow.** `FloorPlanCanvas.svelte` did in fact
+reattach identity after detection, so a plain wall drag *did* keep the room's name — the first
+audit overstated this. But the merge:
+
+- required **exact** wall-set equality, so replacing any boundary wall lost everything;
+- carried only `id`, `name` and `floorTexture`, silently dropping `color`, `roomType` and
+  `labelOffset`;
+- mutated the detected rooms in place;
+- lived inside a Svelte component, so it could not be tested without a renderer.
+
+### The fix
+
+`src/lib/domain/rooms.ts` now owns identity, and the canvas calls it:
 
 ```ts
-id: `room-${roomCount}-${Date.now()}`,
-name: `Room ${roomCount}`,
+const newRooms = reconcileDetectedRooms(
+  detectRooms(currentFloor.walls),
+  detectedRooms,          // live session rooms — most authoritative
+  currentFloor.rooms ?? [] // rooms persisted on the floor
+);
 ```
 
-Identity therefore depends on wall iteration order and the current time, never on the
-geometry. Every recalculation produces new room ids and resets names to `Room N`, so any
-user-assigned room name, floor texture, colour, room type or label offset attached to a room
-cannot survive a geometry edit.
+- **`deriveRoomId(walls)`** replaces the clock-based id with a djb2 hash of the room's sorted,
+  de-duplicated boundary wall ids. Re-detecting an unchanged room yields the same id even with
+  no reconciliation at all.
+- **`reconcileDetectedRooms`** matches on **wall-set Jaccard similarity** rather than exact
+  equality, with a `MIN_ROOM_MATCH_SIMILARITY` of 0.5 — chosen so that replacing one wall of a
+  four-wall room (3 shared of 5 union = 0.6) still counts as the same room.
+- **`ROOM_METADATA_KEYS`** makes the authored fields explicit, so all five carry across and
+  adding a sixth is a one-line change rather than a bug waiting to happen.
+- Matching is **greedy best-first** over all viable pairs, each candidate claimed once.
+  Best-first ordering is what stops a deleted room's name migrating to a neighbour that merely
+  shares walls: every unchanged room claims its own previous self at similarity 1.0 before any
+  changed room competes for the remainder.
+- **`MAX_ROOM_MATCH_AREA_RATIO`** (4x) rejects matches with wildly mismatched areas, since
+  adjacent rooms in a grid necessarily share walls.
+- Pure: inputs are never mutated.
 
-HP-202's acceptance criteria require that *"room IDs/persisted room metadata survive geometry
-recalculation where the boundary is materially unchanged"*, so this needs a stable identity
-scheme — for example deriving a key from the sorted boundary vertices, or matching newly
-detected rooms to existing ones by centroid/area proximity before assigning ids.
+### Why wall sets, not geometry hashes
 
-Current behaviour is pinned by a test so the change is visible when it lands.
+A key derived from boundary *coordinates* would change on every wall nudge — the exact case
+HP-202 says must survive. Wall **ids** are stable under coordinate edits, need no extra
+persisted state, and require no access to the pre-edit geometry, which the canvas no longer
+has by the time it recalculates.
+
+### Legacy projects
+
+Projects saved before this change hold ids like `room-1-1755000000000`. Those never match a
+derived id, so reconciliation recognises them by wall set and **adopts the persisted id**
+rather than replacing it. Keeping the old id — instead of migrating to the derived one — also
+keeps any live `selectedRoomId` reference valid. Covered by
+`tests/geometry/roomIdentity.test.ts`.
+
+### Coverage
+
+- `tests/domain/rooms.test.ts` — 29 unit tests on the matching rules.
+- `tests/geometry/roomIdentity.test.ts` — 9 integration tests over real edit sequences: wall
+  drag, 25 consecutive recalculations, adding a detached room, a divider splitting a room,
+  deleting a room's wall, names not swapping between neighbours, the ten-room grid, and legacy
+  id adoption.
 
 ---
 
 ## 4. Remaining notes
 
-- **Room identity is still unfixed** — see §3. That is the outstanding half of HP-202.
 - `EPSILON = 5` (cm) is a module-local constant serving as both point-equality and snap
   tolerance. HP-204 should move it into shared geometry utilities rather than leaving
   detection to define tolerance for the whole app.

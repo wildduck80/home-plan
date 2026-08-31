@@ -82,13 +82,31 @@ once real plans are imported. Moving assets to IndexedDB blobs is the rest of HP
 | Room detection — outer face suppressed | Working | `test` | Negative signed area skipped |
 | Room detection — crossing walls (X-junctions) | Working | `test` | Fixed (HP-202); was **0 rooms** for a 400×400 four-quadrant plan |
 | Room detection — 10-room grid | Working | `test` | Fixed (HP-202); was 4 rooms instead of 10 |
-| **Room identity across recalculation** | **Broken** | `test` | Ids are `room-N-${Date.now()}`; names reset to `Room N`. Outstanding half of HP-202 |
+| Room ids stable across recalculation | Working | `test` — `roomIdentity.test.ts` | Fixed (HP-202); derived from the boundary wall set, was clock-based |
+| Authored room metadata survives geometry edits | Working | `test` — `rooms.test.ts` | Fixed (HP-202); all five authored fields, was three — see §2.1 |
+| Legacy room ids adopted from disk | Working | `test` — `roomIdentity.test.ts` | Pre-HP-202 clock ids matched by wall set and kept |
 | Room polygon extraction | Working | `test` | ≥3 vertices on all ten fixtures; shares the fixed splitting step |
 | Wall curves (quadratic bezier) | Not verified | `code` | `curvePoint` persists; detection treats walls as straight |
 | Geometry tolerance utilities | Broken | `code` | Do not exist; `EPSILON` is module-local — HP-204 |
 | Degenerate-geometry guards | Not verified | `none` | No NaN/zero-length validation found — HP-205 |
 
-Full analysis, root cause and suggested fix: **`docs/room-detection-matrix.md`**.
+Full analysis and root causes: **`docs/room-detection-matrix.md`**.
+
+### 2.1 Correction to the first audit
+
+The first version of this document said room metadata "cannot survive a geometry edit". That
+was **overstated**. `FloorPlanCanvas.svelte` did reattach identity after detection, so a plain
+wall drag already kept a room's name — the clock-based ids in `detectRooms` were reconciled
+away at the app layer before the user ever saw them.
+
+The real defects were narrower: the merge required *exact* wall-set equality (so replacing any
+boundary wall lost everything), and it carried only `id`, `name` and `floorTexture` — silently
+dropping `color`, `roomType` and `labelOffset` on every recalculation. Both are now fixed in
+`src/lib/domain/rooms.ts`.
+
+Recorded because the original claim came from reading `detectRooms` in isolation without
+tracing its consumers, which is exactly the failure mode the evidence column exists to
+prevent.
 
 ---
 
@@ -266,17 +284,16 @@ but it needs that check first, so it is not bundled into the foundation work.
 | Quota exhaustion deleted every other project (§1.1) | Prunes only regenerable thumbnails, then fails loudly with an export action; stored projects untouched |
 | X-junctions detected **0 rooms** on a four-quadrant plan (§2) | All ten fixtures pass |
 | Hit testing ignored per-item dimensions (§3.1) | One shared resolver across all six consumers |
+| Room reconciliation needed exact wall-set equality and dropped 3 of 5 authored fields (§2.1) | Similarity matching in a tested domain module; all authored fields carried |
 
 ### Outstanding, ranked by risk to real house data
 
 1. **Assets are inline data URLs** (§1.1) — the destructive path is gone, but quota pressure
    is still likely once real plans are imported, and a full quota blocks saving. Moving assets
    to IndexedDB blobs is the rest of **HP-105**.
-2. **Unstable room identity** (§2) — room names, textures and types cannot survive a geometry
-   edit. Outstanding half of **HP-202**.
-3. **HP-005 Three.js lifecycle audit is still open** (§7) — no evidence either way on leaks,
+2. **HP-005 Three.js lifecycle audit is still open** (§7) — no evidence either way on leaks,
    and repeated 2D/3D switching is a core workflow.
-4. **No E2E harness** (§8) — the reason most of §7 and much of §4 remain `none`. Until this
+3. **No E2E harness** (§8) — the reason most of §7 and much of §4 remain `none`. Until this
    exists, this document cannot honestly upgrade those rows.
-5. **`measure` / `annotate` tools diverge from the `Tool` type** (§8) — needs a runtime check
+4. **`measure` / `annotate` tools diverge from the `Tool` type** (§8) — needs a runtime check
    to establish which side is wrong before editing.

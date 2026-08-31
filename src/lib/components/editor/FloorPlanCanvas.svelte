@@ -7,6 +7,7 @@
   import { getMaterial } from '$lib/utils/materials';
   import { getCatalogItem } from '$lib/utils/furnitureCatalog';
   import { resolveFurnitureDimensions, furnitureHalfExtents } from '$lib/domain/furniture';
+  import { reconcileDetectedRooms } from '$lib/domain/rooms';
   import { drawFurnitureIcon } from '$lib/utils/furnitureIcons';
   import { handleGlobalShortcut } from '$lib/utils/shortcuts';
   import ContextMenu from './ContextMenu.svelte';
@@ -848,30 +849,14 @@
     const hash = currentFloor.id + JSON.stringify(currentFloor.walls.map(w => [w.start, w.end]));
     if (hash === lastWallHash) return;
     lastWallHash = hash;
-    const newRooms = detectRooms(currentFloor.walls);
-    const savedRooms = currentFloor.rooms || [];
-    for (const nr of newRooms) {
-      const nrWalls = new Set(nr.walls);
-      const existing = detectedRooms.find(old => {
-        const oldWalls = new Set(old.walls);
-        return oldWalls.size === nrWalls.size && [...nrWalls].every(w => oldWalls.has(w));
-      });
-      if (existing) {
-        nr.id = existing.id;
-        nr.name = existing.name;
-        nr.floorTexture = existing.floorTexture;
-      } else {
-        const saved = savedRooms.find(sr => {
-          const srWalls = new Set(sr.walls);
-          return srWalls.size === nrWalls.size && [...nrWalls].every(w => srWalls.has(w));
-        });
-        if (saved) {
-          nr.id = saved.id;
-          nr.name = saved.name;
-          if (saved.floorTexture) nr.floorTexture = saved.floorTexture;
-        }
-      }
-    }
+    // Reattach ids and authored metadata (name, texture, colour, type, label offset) to the
+    // freshly detected rooms. Live session rooms take precedence over rooms persisted on the
+    // floor; see src/lib/domain/rooms.ts for the matching rules (HP-202).
+    const newRooms = reconcileDetectedRooms(
+      detectRooms(currentFloor.walls),
+      detectedRooms,
+      currentFloor.rooms ?? []
+    );
     detectedRooms = newRooms;
     detectedRoomsStore.set(newRooms);
   }

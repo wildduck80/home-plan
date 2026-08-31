@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { detectRooms, getRoomPolygon } from '$lib/utils/roomDetection';
+import { deriveRoomId } from '$lib/domain/rooms';
 import { goldenFixtures, getGoldenFixture, type GoldenFixture } from '../fixtures/golden';
 
 /**
@@ -173,17 +174,41 @@ describe('room detection — regression characteristics', () => {
 	 * room identity or the user's room names and materials. HP-202's acceptance
 	 * criteria require fixing this; this test pins the status quo so the change is visible.
 	 */
-	it('currently generates fresh room ids on every recalculation', () => {
+	/**
+	 * Ids used to be `room-${index}-${Date.now()}`, so identity depended on wall iteration
+	 * order and the clock. They are now derived from the boundary wall set (HP-202).
+	 */
+	it('generates stable room ids across repeated recalculation', () => {
 		const { walls } = getGoldenFixture('simple-room').project.floors[0];
 
-		const first = detectRooms(walls)[0].id;
-		const second = detectRooms(walls)[0].id;
+		expect(detectRooms(walls)[0].id).toBe(detectRooms(walls)[0].id);
+		expect(detectRooms(walls)[0].id).toBe(deriveRoomId(walls.map((w) => w.id)));
+	});
 
-		expect(first).toMatch(/^room-\d+-\d+$/);
-		expect(second).toMatch(/^room-\d+-\d+$/);
-		// Same index, so ids collide only because Date.now() has not ticked; the point is
-		// that identity is derived from wall order and the clock, never from the geometry.
-		expect(detectRooms(walls)[0].name).toBe('Room 1');
-		expect(second.startsWith('room-1-')).toBe(true);
+	it('keeps room ids stable when a wall moves but its identity does not', () => {
+		const { walls } = getGoldenFixture('simple-room').project.floors[0];
+		const before = detectRooms(walls)[0].id;
+
+		// Enlarge the room by dragging the east wall 100 cm right — same wall ids throughout.
+		const widened = walls.map((w) =>
+			w.id === 'outer-n'
+				? { ...w, end: { x: 500, y: 0 } }
+				: w.id === 'outer-e'
+					? { ...w, start: { x: 500, y: 0 }, end: { x: 500, y: 300 } }
+					: w.id === 'outer-s'
+						? { ...w, start: { x: 500, y: 300 } }
+						: w
+		);
+		const after = detectRooms(widened)[0];
+
+		expect(after.id).toBe(before);
+		// Geometry did change, so the area must be recomputed.
+		expect(after.area).toBe(15);
+	});
+
+	it('gives distinct rooms distinct ids', () => {
+		const rooms = detectRooms(getGoldenFixture('ten-room-grid').project.floors[0].walls);
+
+		expect(new Set(rooms.map((r) => r.id)).size).toBe(rooms.length);
 	});
 });
