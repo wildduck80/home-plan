@@ -32,3 +32,8 @@ vite.config.ts.timestamp-*
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+
+# Private house data — real architect plans, scans and derived assets.
+# These describe where someone lives; they must never reach a remote.
+# Kept broad on purpose: anything under private/ is ignored regardless of type.
+/private/
