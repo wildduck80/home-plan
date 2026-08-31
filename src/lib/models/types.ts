@@ -179,6 +179,9 @@ export interface Floor {
 }
 
 export interface Project {
+  /** Persisted schema version. Set by the project factory and the load pipeline —
+   *  see src/lib/persistence/schema.ts. UI code should never read this. */
+  schemaVersion: number;
   id: string;
   name: string;
   description?: string;

@@ -15,6 +15,7 @@ Thumbs.db
 # Claude Code (personal)
 .claude/
 .vscode/
+.serena/
 
 # Env
 .env

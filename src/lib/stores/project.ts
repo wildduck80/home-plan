@@ -1,27 +1,14 @@
 import { writable, derived, get } from 'svelte/store';
 import type { Project, Floor, Wall, Door, Window as Win, FurnitureItem, Point, Stair, Column, BackgroundImage, GuideLine, ElementGroup, EntourageItem } from '$lib/models/types';
+import { createFloor, createProject } from '$lib/domain/factories';
+import { uid } from '$lib/domain/ids';
 
 
-function uid(): string {
-  return Math.random().toString(36).slice(2, 10);
-}
-
-export function createDefaultFloor(level = 0): Floor {
-  const id = uid();
-  return { id, name: level === 0 ? 'Ground Floor' : `Floor ${level}`, level, walls: [], rooms: [], doors: [], windows: [], furniture: [], stairs: [], columns: [], guides: [], measurements: [], annotations: [], textAnnotations: [], groups: [] };
-}
-
-export function createDefaultProject(name = 'Untitled Project'): Project {
-  const floor = createDefaultFloor();
-  return {
-    id: uid(),
-    name,
-    floors: [floor],
-    activeFloorId: floor.id,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
-}
+// Floor/Project construction lives in $lib/domain/factories so that a floor can never be
+// built with a missing collection (HP-103). These wrappers keep the long-standing names
+// that the rest of the app and the RoomPlan importer already call.
+export const createDefaultFloor = (level = 0): Floor => createFloor({ level });
+export const createDefaultProject = (name = 'Untitled Project'): Project => createProject(name);
 
 export const currentProject = writable<Project | null>(null);
 
@@ -561,7 +548,7 @@ export function addFloor(name?: string, copyCurrentLayout = false) {
   if (!p) return;
   snapshot('Added floor');
   const level = p.floors.length;
-  const floor: Floor = { id: uid(), name: name ?? `Floor ${level}`, level, walls: [], rooms: [], doors: [], windows: [], furniture: [], stairs: [], columns: [], guides: [], measurements: [], annotations: [], textAnnotations: [], groups: [] };
+  const floor: Floor = createFloor({ name, level });
   if (copyCurrentLayout) {
     const cur = p.floors.find(f => f.id === p.activeFloorId);
     if (cur) {

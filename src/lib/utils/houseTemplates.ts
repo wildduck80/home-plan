@@ -1,8 +1,6 @@
 import type { Project, Floor, Wall, Door, Window, FurnitureItem } from '$lib/models/types';
-
-function uid(): string {
-  return Math.random().toString(36).slice(2, 10);
-}
+import { createFloor, createProject } from '$lib/domain/factories';
+import { uid } from '$lib/domain/ids';
 
 export interface HouseTemplate {
   name: string;
@@ -14,35 +12,11 @@ export interface HouseTemplate {
 }
 
 function makeProject(name: string, floor: Floor): Project {
-  return {
-    id: uid(),
-    name,
-    floors: [floor],
-    activeFloorId: floor.id,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+  return { ...createProject(name), floors: [floor], activeFloorId: floor.id };
 }
 
 function makeFloor(walls: Wall[], doors: Door[], windows: Window[], furniture: FurnitureItem[] = []): Floor {
-  const id = uid();
-  return {
-    id,
-    name: 'Ground Floor',
-    level: 0,
-    walls,
-    rooms: [],
-    doors,
-    windows,
-    furniture,
-    stairs: [],
-    columns: [],
-    guides: [],
-    measurements: [],
-    annotations: [],
-    textAnnotations: [],
-    groups: [],
-  };
+  return { ...createFloor({ level: 0 }), walls, doors, windows, furniture };
 }
 
 // Helper: create a rectangular room from walls, returning wall IDs for door/window placement

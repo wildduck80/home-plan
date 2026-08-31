@@ -1,4 +1,5 @@
 import type { Project } from '$lib/models/types';
+import { parseProjectJson, serializeProjectCompact } from '$lib/persistence/projectIo';
 
 export interface DataStore {
   save(project: Project): Promise<void>;
@@ -23,7 +24,7 @@ function getAll(): Record<string, string> {
 export const localStore: DataStore = {
   async save(project) {
     const all = getAll();
-    all[project.id] = JSON.stringify(project);
+    all[project.id] = serializeProjectCompact(project);
     try {
       localStorage.setItem(KEY, JSON.stringify(all));
     } catch (e: any) {
@@ -48,27 +49,26 @@ export const localStore: DataStore = {
     const all = getAll();
     const raw = all[id];
     if (!raw) return null;
-    const p = JSON.parse(raw);
-    p.createdAt = new Date(p.createdAt);
-    p.updatedAt = new Date(p.updatedAt);
-    // Migrate floors: ensure all array fields exist
-    for (const floor of (p.floors ?? [])) {
-      if (!floor.rooms) floor.rooms = [];
-      if (!floor.doors) floor.doors = [];
-      if (!floor.windows) floor.windows = [];
-      if (!floor.furniture) floor.furniture = [];
-      if (!floor.stairs) floor.stairs = [];
-      if (!floor.columns) floor.columns = [];
-    }
-    return p as Project;
+    // Version detection, migration, date revival and floor normalization all happen in
+    // the shared pipeline — this loader must not re-implement any of it (HP-102).
+    return parseProjectJson(raw);
   },
 
   async list() {
     const all = getAll();
-    return Object.values(all).map((raw) => {
-      const p = JSON.parse(raw as string);
-      return { id: p.id, name: p.name, updatedAt: p.updatedAt };
-    });
+    // Deliberately a shallow metadata read rather than a full load: the project list must
+    // stay cheap. One unreadable entry is skipped with a warning instead of taking down
+    // the whole list — the user can still open and export their other projects.
+    const entries: { id: string; name: string; updatedAt: string }[] = [];
+    for (const [key, raw] of Object.entries(all)) {
+      try {
+        const p = JSON.parse(raw as string);
+        entries.push({ id: p.id ?? key, name: p.name ?? 'Untitled Project', updatedAt: p.updatedAt });
+      } catch (e: unknown) {
+        console.warn(`[DataStore] Skipping unreadable project "${key}" in project list`, e);
+      }
+    }
+    return entries;
   },
 
   async delete(id) {

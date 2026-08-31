@@ -1,6 +1,7 @@
 import { writable, get } from 'svelte/store';
 import { currentProject, loadProject } from './project';
 import type { Project } from '$lib/models/types';
+import { parseProjectJson, serializeProjectCompact } from '$lib/persistence/projectIo';
 
 export interface Snapshot {
   timestamp: number;
@@ -44,7 +45,7 @@ export function saveSnapshot(project: Project, description: string) {
   snapshots.push({
     timestamp: Date.now(),
     description,
-    data: JSON.stringify(project),
+    data: serializeProjectCompact(project),
   });
   // Prune to keep last MAX_SNAPSHOTS
   while (snapshots.length > MAX_SNAPSHOTS) {
@@ -58,10 +59,9 @@ export function restoreSnapshot(projectId: string, index: number): boolean {
   const snapshots = getSnapshots(projectId);
   if (index < 0 || index >= snapshots.length) return false;
   try {
-    const project = JSON.parse(snapshots[index].data) as Project;
-    if (project.createdAt) project.createdAt = new Date(project.createdAt as any);
-    if (project.updatedAt) project.updatedAt = new Date(project.updatedAt as any);
-    loadProject(project);
+    // Snapshots can predate the current schema, so restore goes through the same
+    // migration pipeline as any other load (HP-102).
+    loadProject(parseProjectJson(snapshots[index].data));
     return true;
   } catch (e) {
     console.error('[VersionHistory] Failed to restore snapshot:', e);

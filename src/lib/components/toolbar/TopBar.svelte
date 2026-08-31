@@ -8,6 +8,8 @@
   import { exportAsPNG, exportAsJSON, exportAsSVG, exportPDF } from '$lib/utils/export';
   import { exportDXF, exportDWG } from '$lib/utils/cadExport';
   import { importRoomPlan } from '$lib/utils/roomplanImport';
+  import { deserializeProject } from '$lib/persistence/projectIo';
+  import { ProjectLoadError } from '$lib/persistence/schema';
   import SettingsDialog from './SettingsDialog.svelte';
   import AreaSummaryPanel from '$lib/components/sidebar/AreaSummaryPanel.svelte';
   import { saveState, lastSavedAt, manualSave, initAutoSave } from '$lib/stores/saveStatus';
@@ -237,30 +239,21 @@
           // RoomPlan JSON — import into current project
           const floor = importRoomPlan(data, { straighten: true, orthogonal: true });
           importFloorIntoCurrentProject(floor);
-        } else if (data.floors && data.id) {
-          // Validate project structure
-          if (!Array.isArray(data.floors) || data.floors.length === 0) {
-            alert('Invalid project file: "floors" must be a non-empty array.');
-            return;
-          }
-          for (const fl of data.floors) {
-            if (!fl.id || !Array.isArray(fl.walls)) {
-              alert('Invalid project file: each floor must have an "id" and "walls" array.');
-              return;
-            }
-          }
-          if (!data.activeFloorId || !data.floors.some((f: any) => f.id === data.activeFloorId)) {
-            data.activeFloorId = data.floors[0].id;
-          }
-          // Revive dates
-          if (data.createdAt) data.createdAt = new Date(data.createdAt);
-          if (data.updatedAt) data.updatedAt = new Date(data.updatedAt);
-          loadProject(data as Project);
+        } else if (data.floors) {
+          // Validation, migration, date revival and floor normalization all live in the
+          // shared load pipeline so imported files get exactly the same treatment as
+          // files read from local storage (HP-102).
+          loadProject(deserializeProject(data));
         } else {
           alert('Unrecognized file format. Expected a project file or Apple RoomPlan JSON.');
         }
-      } catch (e: any) {
-        alert('Failed to import: ' + e.message);
+      } catch (e: unknown) {
+        if (e instanceof ProjectLoadError) {
+          alert(`Could not import this project.\n\n${e.message}`);
+        } else {
+          alert('Failed to import: ' + (e instanceof Error ? e.message : String(e)));
+        }
+        console.error('[TopBar] Project import failed', e);
       }
     };
     input.click();

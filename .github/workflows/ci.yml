@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref — only the newest commit's result matters.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: check / build / test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `svelte-check` carries 6 errors inherited from the upstream baseline
+      # (see docs/baseline.md). Failing the build on them would block every PR, so
+      # instead we assert the count has not grown. Lower BASELINE_CHECK_ERRORS as
+      # these are fixed; never raise it.
+      - name: Type check (no regression against baseline)
+        env:
+          BASELINE_CHECK_ERRORS: '6'
+        run: |
+          set -o pipefail
+          npm run check 2>&1 | tee check.log || true
+
+          summary=$(grep -oE 'svelte-check found [0-9]+ errors' check.log | tail -1)
+          if [ -z "$summary" ]; then
+            echo "::error::Could not parse svelte-check output — see check.log above."
+            exit 1
+          fi
+
+          errors=$(echo "$summary" | grep -oE '[0-9]+')
+          echo "svelte-check errors: $errors (baseline: $BASELINE_CHECK_ERRORS)"
+
+          if [ "$errors" -gt "$BASELINE_CHECK_ERRORS" ]; then
+            echo "::error::svelte-check errors increased from $BASELINE_CHECK_ERRORS to $errors."
+            grep -A2 'Error:' check.log || true
+            exit 1
+          fi
+
+          if [ "$errors" -lt "$BASELINE_CHECK_ERRORS" ]; then
+            echo "::notice::svelte-check errors dropped to $errors. Lower BASELINE_CHECK_ERRORS in .github/workflows/ci.yml."
+          fi
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build

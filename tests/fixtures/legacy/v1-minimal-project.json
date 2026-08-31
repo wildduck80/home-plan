@@ -1,0 +1,61 @@
+{
+  "id": "legacyv1",
+  "name": "Legacy Baseline House",
+  "description": "Saved by openPlan3D 0.9.0 before schemaVersion existed.",
+  "activeFloorId": "floorgnd",
+  "createdAt": "2026-01-15T09:30:00.000Z",
+  "updatedAt": "2026-02-02T18:45:12.000Z",
+  "floors": [
+    {
+      "id": "floorgnd",
+      "name": "Ground Floor",
+      "level": 0,
+      "walls": [
+        {
+          "id": "wall-n",
+          "start": { "x": 0, "y": 0 },
+          "end": { "x": 400, "y": 0 },
+          "thickness": 15,
+          "height": 280,
+          "color": "#444444"
+        },
+        {
+          "id": "wall-e",
+          "start": { "x": 400, "y": 0 },
+          "end": { "x": 400, "y": 300 },
+          "thickness": 15,
+          "height": 280,
+          "color": "#444444"
+        },
+        {
+          "id": "wall-s",
+          "start": { "x": 400, "y": 300 },
+          "end": { "x": 0, "y": 300 },
+          "thickness": 15,
+          "height": 280,
+          "color": "#444444"
+        },
+        {
+          "id": "wall-w",
+          "start": { "x": 0, "y": 300 },
+          "end": { "x": 0, "y": 0 },
+          "thickness": 15,
+          "height": 280,
+          "color": "#444444"
+        }
+      ],
+      "doors": [
+        {
+          "id": "door-1",
+          "wallId": "wall-s",
+          "position": 0.5,
+          "width": 90,
+          "height": 210,
+          "type": "single",
+          "swingDirection": "left",
+          "flipSide": false
+        }
+      ]
+    }
+  ]
+}

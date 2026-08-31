@@ -768,21 +768,13 @@ export function importRoomPlan(jsonData: any, options: RoomPlanImportOptions = {
   }
 
   return {
+    ...createDefaultFloor(0),
     id: floorId,
-    name: 'Ground Floor',
-    level: 0,
     walls,
     rooms,
     doors,
     windows,
     furniture,
-    stairs: [],
-    columns: [],
-    guides: [],
-    measurements: [],
-    annotations: [],
-    textAnnotations: [],
-    groups: [],
   };
 }
 
