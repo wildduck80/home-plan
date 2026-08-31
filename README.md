@@ -100,6 +100,45 @@ npm run build
 npm run preview
 ```
 
+### Tests and checks
+
+```bash
+npm test           # unit + integration tests (Vitest)
+npm run test:watch # watch mode
+npm run check      # svelte-check type checking
+```
+
+Geometry and persistence suites run without a renderer or a dev server, so they are fast and
+usable in CI.
+
+### Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request to
+`main`:
+
+| Step | Gate |
+|---|---|
+| `npm run check` | Fails if the `svelte-check` error count rises above the recorded baseline |
+| `npm test` | Must pass |
+| `npm run build` | Must pass |
+
+The type-check step compares against a baseline rather than requiring zero errors, because
+6 pre-existing errors are inherited from upstream — see
+[`docs/baseline.md`](docs/baseline.md). Lower `BASELINE_CHECK_ERRORS` in the workflow as they
+are fixed; never raise it.
+
+### Home-planner fork documentation
+
+This fork is evolving openPlan3D into a private home-planning tool. Start here:
+
+| Document | Contents |
+|---|---|
+| [`PRD_openPlan3D_home_planner.md`](PRD_openPlan3D_home_planner.md) | Product requirements |
+| [`IMPLEMENTATION_PLAN_openPlan3D_home_planner.md`](IMPLEMENTATION_PLAN_openPlan3D_home_planner.md) | Epics, tickets and execution order |
+| [`docs/baseline.md`](docs/baseline.md) | Pinned upstream commit, remotes, upstream-sync policy |
+| [`docs/current-capability-matrix.md`](docs/current-capability-matrix.md) | What works today, with evidence per claim |
+| [`docs/room-detection-matrix.md`](docs/room-detection-matrix.md) | Room-detection verification results and known defects |
+
 ---
 
 ## ⌨️ Keyboard Shortcuts
