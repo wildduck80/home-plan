@@ -349,9 +349,9 @@ measuring once real multi-floor houses with background images exist.
 | Capability | Status | Evidence | Notes |
 |---|---|---|---|
 | Background image (PNG/JPG) | Working | `e2e` | Inline data URL; a missing redraw-on-load was fixed — see §6.1 |
-| Background transform (position/scale/rotation/opacity/lock) | Partially working | `code` | All five fields exist and round-trip (`test`) |
+| Background transform (position/scale/rotation/opacity/lock) | Working | `test` | All five round-trip; calibration now sets scale and position together |
 | Background brightness / contrast | Broken | `code` | Not in the type — HP-302 |
-| Scale calibration | Partially working | `code` | `calibrationMode` + `calibrationPoints` exist; accuracy unverified — HP-303 |
+| Scale calibration | Working | `test` + `e2e` | HP-303 done — two-point flow with live preview, Esc cancel, persisted record; see §6.2 |
 | **PDF import** | Working | `test` + `e2e` | HP-301 done — page picker, resolution presets, verified against the real architect PDF; see §6.1 |
 | Trace mode | Broken | `code` | Not found — HP-304 |
 | Apple RoomPlan import | Not verified | `code` | Substantial implementation; ad-hoc scripts exist (§8) |
@@ -397,11 +397,63 @@ too, not just PDFs — it was simply easier to notice with a plan-sized image. A
 
 #### Still outstanding for the trace workflow
 
-HP-301 covers import only. Calibration (HP-303) is the next step and the accuracy-critical one:
-the real plan has **no text layer** — labels are flattened to vector paths — so dimensions
-cannot be extracted programmatically and scale must be set from a known distance. The plan's own
-dimension chains give a self-checking test: calibrate on the 1120 cm chain, then the 1000 cm
-chain must measure 1000.
+HP-301 covers import only. Calibration is §6.2. Still open from HP-302: reference **brightness
+and contrast** controls, and moving the image out of the project record into an asset reference.
+Neither was attempted here — a faint 0.4-opacity underlay would benefit from contrast, but it is
+a separate change and bundling it in would have obscured both.
+
+### 6.2 Scale calibration (HP-303)
+
+`src/lib/import/reference/calibration.ts` holds the arithmetic, pure and free of any store or
+canvas dependency — this is what determines whether a modelled house is dimensionally true, so
+it is testable on its own (36 unit tests).
+
+**The acceptance criterion is met and verified two ways.** The real plan carries dimension
+chains of 1120 cm and 1000 cm. Calibrating on the first and measuring the second returns
+1000 cm to within 4 decimal places, and stays inside 990–1010 cm under a two-pixel click error —
+which is the selection tolerance of the source, not an arithmetic error. Asserted in both the
+unit suite and E2E.
+
+#### What the previous implementation did
+
+A blocking `window.prompt()` on the second click. No preview of the resulting scale, no way to
+fix a misplaced point, no cancel, and nothing recorded afterwards. The arithmetic underneath was
+correct; everything around it was missing.
+
+#### What it does now
+
+A floating panel — deliberately **not** a modal, because panning and zooming must stay available
+while placing points, which is an explicit HP-303 requirement:
+
+- A/B markers that fill in as points land, with a Reset link.
+- A third click re-places the span rather than forcing a cancel-and-restart.
+- Live preview before committing: measured span, entered distance, and the resulting resize
+  factor.
+- Accepts `mm`/`cm`/`m` and a **comma decimal separator** — the source plans are European, where
+  `10,00 m` is normal notation and rejecting it would be a needless papercut.
+- Esc cancels, Enter applies.
+- Refuses spans below a minimum length, because calibrating across a few pixels multiplies click
+  error by the ratio of real to measured distance.
+
+#### Position compensation
+
+Applying a scale also adjusts `position` so the **midpoint of the measured span stays put**.
+Scaling about the image centre would fling the feature the user just measured off screen, making
+it awkward to verify the result — which is the entire point of calibrating.
+
+#### The calibration is recorded, not just applied
+
+`BackgroundImage.calibration` stores the known distance, both points and a timestamp, so the
+panel can show what the scale was last set from and the user can judge whether to redo it. Being
+an optional field it needs no schema bump; v2 normalization preserves it through save/load.
+
+#### A note on "recalibration does not compound"
+
+The obvious reading of that phrase is wrong, and it cost a test. Calibration is defined against
+**image features**, not world coordinates. Once the reference is rescaled, a given world span
+covers a different number of image pixels — so re-measuring the same *world* span and entering
+the same distance legitimately produces a different scale. Idempotence holds when the same
+*feature* is re-measured, which is what the unit suite asserts.
 
 ## 7. Rendering, view and export
 
@@ -485,7 +537,7 @@ the spec now provokes a change rather than expecting frames while idle.
 | `svelte-check` | Partially working | 6 errors, 25 warnings — all 6 from one cause, below |
 | Unit test runner | Working | Vitest; 184 tests |
 | CI | Working | GitHub Actions: check (no-regression), test, build |
-| E2E tests | Partially working | Playwright configured; 33 specs cover storage, Three.js lifecycle and PDF import. Rendering fidelity, walkthrough and export still uncovered |
+| E2E tests | Partially working | Playwright configured; 45 specs cover storage, Three.js lifecycle, PDF import and calibration. Rendering fidelity, walkthrough and export still uncovered |
 | Ad-hoc root test scripts | Partially working | `test-room-polygons.ts`, `test-orthogonal.ts`, `test-furniture-rotation.ts` are `npx tsx` scripts that print to stdout — not runnable in CI. Worth porting into the Vitest suite alongside HP-201. |
 
 ### The 6 `svelte-check` errors
@@ -515,6 +567,7 @@ but it needs that check first, so it is not bundled into the foundation work.
 | WebGL contexts never released — 3D view would break after ~15 view toggles (§7.1) | Contexts released on unmount; 2 live after 10 toggles |
 | No PDF import at all (§6.1) | Page picker with drawing detection and resolution presets, verified on the real architect plan |
 | Reference images stayed invisible until an unrelated repaint (§6.1) | Redraw triggered on image load; also fixes the pre-existing raster path |
+| Calibration used a blocking prompt() with no preview, cancel or record (§6.2) | Floating panel with live preview, Esc cancel, unit parsing and a persisted calibration record |
 | X-junctions detected **0 rooms** on a four-quadrant plan (§2) | All ten fixtures pass |
 | Hit testing ignored per-item dimensions (§3.1) | One shared resolver across all six consumers |
 | Room reconciliation needed exact wall-set equality and dropped 3 of 5 authored fields (§2.1) | Similarity matching in a tested domain module; all authored fields carried |

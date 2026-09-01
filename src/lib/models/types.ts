@@ -130,6 +130,17 @@ export interface GuideLine {
   position: number; // world coordinate (x for vertical, y for horizontal)
 }
 
+/** What a completed scale calibration recorded, so it can be shown and redone (HP-303). */
+export interface ReferenceCalibration {
+  /** The real-world distance the user entered, in cm. */
+  knownDistanceCm: number;
+  /** The two points they clicked, in world coordinates at the time of calibration. */
+  pointA: Point;
+  pointB: Point;
+  /** ISO timestamp, so the properties panel can say when the scale was last set. */
+  calibratedAt: string;
+}
+
 export interface BackgroundImage {
   dataUrl: string;
   position: Point;
@@ -137,6 +148,10 @@ export interface BackgroundImage {
   opacity: number;
   rotation: number;
   locked: boolean;
+  /** Present once the reference has been calibrated against a known dimension. */
+  calibration?: ReferenceCalibration;
+  /** Original file name, shown in the properties panel. */
+  sourceName?: string;
 }
 
 /** A placed 2D entourage symbol (person, car, tree, …) for presentation plans */

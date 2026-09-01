@@ -11,6 +11,7 @@
   let showLayers = $state(false);
   import FloorPlanCanvas from '$lib/components/editor/FloorPlanCanvas.svelte';
   import AlignmentToolbar from '$lib/components/editor/AlignmentToolbar.svelte';
+  import CalibrationOverlay from '$lib/components/editor/CalibrationOverlay.svelte';
   import UndoHistoryPanel from '$lib/components/editor/UndoHistoryPanel.svelte';
   import CommandPalette from '$lib/components/editor/CommandPalette.svelte';
   import ElevationView from '$lib/components/editor/ElevationView.svelte';
@@ -182,6 +183,9 @@
         {#if mode === '2d'}
           <FloorPlanCanvas />
           <AlignmentToolbar />
+          <!-- Floating, not modal: panning and zooming must stay available while
+               placing calibration points (HP-303). -->
+          <CalibrationOverlay />
           {#if $elevationWallId}
             <!-- Integrated elevation view replaces the plan canvas area (sidebars stay) -->
             <ElevationView />

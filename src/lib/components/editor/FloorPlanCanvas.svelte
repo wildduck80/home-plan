@@ -2176,23 +2176,16 @@
       selectedAnnotationId = null;
     }
 
-    // Calibration mode click
+    // Calibration mode click — collect the two points only.
+    // The distance prompt used to live here as a blocking `prompt()`, which gave no preview of
+    // the resulting scale, no way to adjust a misplaced point, and no cancel. CalibrationOverlay
+    // now owns everything after the second click (HP-303).
     if (isCalibrating) {
       calibrationPoints.update(pts => {
-        const newPts = [...pts, { x: wp.x, y: wp.y }];
-        if (newPts.length >= 2) {
-          const dist = Math.hypot(newPts[1].x - newPts[0].x, newPts[1].y - newPts[0].y);
-          const realDist = prompt('Enter the real-world distance between these two points (in cm):');
-          if (realDist && Number(realDist) > 0) {
-            const pixelsPerCm = dist / Number(realDist);
-            if (currentFloor?.backgroundImage) {
-              updateBackgroundImage({ scale: currentFloor.backgroundImage.scale * (1 / pixelsPerCm) });
-            }
-          }
-          calibrationMode.set(false);
-          return [];
-        }
-        return newPts;
+        // Two points is the whole measurement; further clicks restart it, so a misplaced
+        // second point does not force the user to cancel and begin again.
+        if (pts.length >= 2) return [{ x: wp.x, y: wp.y }];
+        return [...pts, { x: wp.x, y: wp.y }];
       });
       return;
     }
