@@ -11,9 +11,16 @@ export interface ProjectSettings {
   wallMeasureMode: 'centerline' | 'edge'; // measure walls center-to-center or edge-to-edge (clear span)
   snapToGrid: boolean;                   // snap elements to grid when dragging
   gridSize: number;                      // grid snap size in cm (default 25)
+  showClearanceZones: boolean;           // draw the space furniture needs in front of it (HP-606)
 }
 
-const defaultSettings: ProjectSettings = {
+/**
+ * Canonical defaults.
+ *
+ * Exported because two components previously held their own copies of this literal, so adding a
+ * field broke both — the compiler caught it, but only after the fact.
+ */
+export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   units: 'metric',
   showDimensions: true,
   showExternalDimensions: true,
@@ -24,16 +31,19 @@ const defaultSettings: ProjectSettings = {
   wallMeasureMode: 'centerline',
   snapToGrid: true,
   gridSize: 25,
+  // On by default: the whole point of the app is answering whether a room works, and a
+  // clearance check the user must first discover and enable would mostly stay off.
+  showClearanceZones: true,
 };
 
 // Load from localStorage if available
 function loadSettings(): ProjectSettings {
-  if (typeof window === 'undefined') return { ...defaultSettings };
+  if (typeof window === 'undefined') return { ...DEFAULT_PROJECT_SETTINGS };
   try {
     const saved = localStorage.getItem('o3d_settings');
-    if (saved) return { ...defaultSettings, ...JSON.parse(saved) };
+    if (saved) return { ...DEFAULT_PROJECT_SETTINGS, ...JSON.parse(saved) };
   } catch {}
-  return { ...defaultSettings };
+  return { ...DEFAULT_PROJECT_SETTINGS };
 }
 
 function createSettingsStore() {
@@ -57,7 +67,7 @@ function createSettingsStore() {
       });
     },
     reset() {
-      this.set({ ...defaultSettings });
+      this.set({ ...DEFAULT_PROJECT_SETTINGS });
     },
   };
 }

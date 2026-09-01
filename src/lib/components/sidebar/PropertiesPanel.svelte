@@ -6,6 +6,7 @@
   import { projectSettings, formatLength, formatArea } from '$lib/stores/settings';
   import { openingOffsets, positionForOffset, resizeWallToLength, type LengthAnchor } from '$lib/domain/wallEditing';
   import { findCollisions, collisionsFor } from '$lib/domain/collisionCheck';
+  import { findClearanceIssues } from '$lib/domain/clearance';
   import { getCatalogItem as lookupCatalogItem } from '$lib/utils/furnitureCatalog';
   import { base } from '$app/paths';
   import type { Floor, Wall, Door, Window as Win, Room, FurnitureItem, Stair, Column, RoomCategory, TextAnnotation } from '$lib/models/types';
@@ -45,6 +46,17 @@
   let selectionCollisions = $derived(
     floor && selId ? collisionsFor(findCollisions(floor, lookupCatalogItem), selId) : []
   );
+  /** Clearance problems involving the selection — cannot open it, cannot walk past it (HP-606). */
+  let selectionClearance = $derived.by(() => {
+    // Captured locally: TypeScript cannot narrow a reactive value inside a closure.
+    const id = selId;
+    if (!floor || !id) return [];
+    return findClearanceIssues(floor, lookupCatalogItem).filter((i) => i.ids.includes(id));
+  });
+  let selectionWarnings = $derived([
+    ...selectionCollisions.map((c) => c.message),
+    ...selectionClearance.map((c) => c.message)
+  ]);
   let selectedDoor = $derived(floor?.doors?.find(d => d.id === selId) ?? null);
   let selectedWindow = $derived(floor?.windows?.find(w => w.id === selId) ?? null);
   let selectedFurniture = $derived(floor?.furniture?.find(f => f.id === selId) ?? null);
@@ -335,14 +347,14 @@
 <div class="{is3D ? 'w-80' : 'w-64'} shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-y-auto p-3 fixed right-0 top-12 bottom-9 z-40 shadow-lg max-md:top-auto max-md:bottom-0 max-md:left-0 max-md:w-full max-md:max-h-[45vh] max-md:border-l-0 max-md:border-t max-md:rounded-t-xl max-md:shadow-2xl" class:hidden={!hasSelection}>
   <!-- Fit warnings for whatever is selected, above its properties. Advisory only: nothing here
        prevents the placement, per PRD 16. -->
-  {#if selectionCollisions.length > 0}
+  {#if selectionWarnings.length > 0}
     <div class="mb-3 px-2.5 py-2 bg-red-50 border border-red-200 rounded-lg" role="status">
       <div class="text-xs font-semibold text-red-700 mb-1">
-        ⚠ {selectionCollisions.length} fit issue{selectionCollisions.length !== 1 ? 's' : ''}
+        ⚠ {selectionWarnings.length} fit issue{selectionWarnings.length !== 1 ? 's' : ''}
       </div>
       <ul class="text-[11px] text-red-700 space-y-0.5 list-none">
-        {#each selectionCollisions as collision (collision.kind + collision.ids.join('-'))}
-          <li>{collision.message}</li>
+        {#each selectionWarnings as message, i (i)}
+          <li>{message}</li>
         {/each}
       </ul>
       <p class="text-[10px] text-red-400 mt-1">This is a warning — the placement is kept.</p>

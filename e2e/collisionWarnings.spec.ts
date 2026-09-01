@@ -135,3 +135,68 @@ test.describe('door swing', () => {
 		await expect(page.getByText(/fit issue/i)).toHaveCount(0);
 	});
 });
+
+test.describe('clearance (HP-605 / HP-606)', () => {
+	test('reports a blocked wardrobe opening', async ({ page }) => {
+		await openEditor(page);
+		await addFurniture(page, [
+			{ id: 'w', catalogId: 'wardrobe', x: 200, y: 80 },
+			// Directly in front of the wardrobe, inside its 90cm opening zone.
+			{ id: 'blocker', catalogId: 'chair', x: 200, y: 150 }
+		]);
+
+		await page.evaluate(async () => {
+			const store = await import('/src/lib/stores/project.ts');
+			store.selectedElementId.set('w');
+		});
+
+		await expect(page.getByText(/Wardrobe opening needs 90/i)).toBeVisible({ timeout: 10_000 });
+	});
+
+	test('stays quiet when the opening is clear', async ({ page }) => {
+		await openEditor(page);
+		await addFurniture(page, [
+			{ id: 'w', catalogId: 'wardrobe', x: 200, y: 40 },
+			// Beyond the zone: wardrobe front at y=70, zone ends at y=160.
+			{ id: 'clear', catalogId: 'chair', x: 200, y: 240 }
+		]);
+
+		await page.evaluate(async () => {
+			const store = await import('/src/lib/stores/project.ts');
+			store.selectedElementId.set('w');
+		});
+
+		await page.waitForTimeout(1500);
+		await expect(page.getByText(/Wardrobe opening needs/i)).toHaveCount(0);
+	});
+
+	test('a clearance warning does not move the furniture', async ({ page }) => {
+		await openEditor(page);
+		await addFurniture(page, [
+			{ id: 'w', catalogId: 'wardrobe', x: 200, y: 80 },
+			{ id: 'blocker', catalogId: 'chair', x: 200, y: 150 }
+		]);
+		await page.evaluate(async () => {
+			const store = await import('/src/lib/stores/project.ts');
+			store.selectedElementId.set('w');
+		});
+		await expect(page.getByText(/Wardrobe opening needs 90/i)).toBeVisible({ timeout: 10_000 });
+
+		const positions = await page.evaluate(async () => {
+			const store = await import('/src/lib/stores/project.ts');
+			const floor = await new Promise<{ furniture: { id: string; position: { x: number; y: number } }[] } | null>(
+				(resolve) => {
+					const unsub = store.activeFloor.subscribe((v: unknown) => resolve(v as never));
+					unsub();
+				}
+			);
+			return floor!.furniture.map((f) => [f.id, f.position.x, f.position.y]);
+		});
+
+		// Clearance is advisory, exactly like collision.
+		expect(positions).toEqual([
+			['w', 200, 80],
+			['blocker', 200, 150]
+		]);
+	});
+});

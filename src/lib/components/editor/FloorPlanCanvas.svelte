@@ -9,6 +9,7 @@
   import { resolveFurnitureDimensions, furnitureHalfExtents } from '$lib/domain/furniture';
   import { buildSnapIndex, findSnapTarget, type SnapIndex } from '$lib/import/reference/snapGeometry';
   import { findCollisions, type Collision } from '$lib/domain/collisionCheck';
+  import { clearanceZonesFor, findClearanceIssues, nearestDistances, type ClearanceIssue } from '$lib/domain/clearance';
   import { rectCorners, orientedBounds } from '$lib/domain/collision';
   import { imageToWorld, worldToImage } from '$lib/import/reference/referenceSpace';
   import { reconcileDetectedRooms } from '$lib/domain/rooms';
@@ -17,7 +18,7 @@
   import ContextMenu from './ContextMenu.svelte';
   import { roomPresets, placePreset } from '$lib/utils/roomPresets';
   import { getWallTextureCanvas, getFloorTextureCanvas } from '$lib/utils/textureGenerator';
-  import { projectSettings, formatLength, formatArea } from '$lib/stores/settings';
+  import { projectSettings, formatLength, formatArea, DEFAULT_PROJECT_SETTINGS } from '$lib/stores/settings';
   import type { ProjectSettings } from '$lib/stores/settings';
   import type { CanvasState } from '$lib/utils/canvasInteraction';
   import { drawWall as _drawWall, drawDoorOnWall as _drawDoorOnWall, drawWindowOnWall as _drawWindowOnWall, drawDoorDistanceDimensions as _drawDoorDistanceDimensions, drawWindowDistanceDimensions as _drawWindowDistanceDimensions, drawFurnitureItem, drawStair as _drawStair, drawColumn as _drawColumn, drawGuides as _drawGuides, drawPersistedMeasurements as _drawPersistedMeasurements, drawTextAnnotations as _drawTextAnnotations, drawAnnotation as _drawAnnotation, drawAnnotations as _drawAnnotations, drawRooms as _drawRooms, drawWallJoints as _drawWallJoints, drawSnapPoints as _drawSnapPoints, drawMinimap as _drawMinimap, drawEntourageItems as _drawEntourageItems, drawEntourageGhost as _drawEntourageGhost, entourageAspect } from '$lib/utils/canvasRenderer';
@@ -114,12 +115,8 @@
   let showWindows = $derived(layerVis.windows);
   let showRoomLabels = $state(true);
   let showDimensions = $state(true);
-  let dimSettings: ProjectSettings = $state({
-    units: 'metric', showDimensions: true, showExternalDimensions: true,
-    showInternalDimensions: false, showExtensionLines: true,
-    showObjectDistance: true, dimensionLineColor: '#1e293b',
-    wallMeasureMode: 'centerline', snapToGrid: true, gridSize: 25,
-  });
+  // Seeded from the canonical defaults; the store overwrites this on first subscribe.
+  let dimSettings: ProjectSettings = $state({ ...DEFAULT_PROJECT_SETTINGS });
   projectSettings.subscribe((s) => {
     dimSettings = s;
     showDimensions = s.showDimensions;
@@ -169,6 +166,8 @@
   let refSnapHit: Point | null = $state(null);
   /** Fit problems on the active floor (HP-602/603/604). Warnings only — never blocking. */
   let collisions: Collision[] = $state([]);
+  /** Clearance problems — furniture that cannot be opened or walked past (HP-605). */
+  let clearanceIssues: ClearanceIssue[] = $state([]);
   let collisionSignature = '';
 
   /**
@@ -188,6 +187,7 @@
     if (signature === collisionSignature) return;
     collisionSignature = signature;
     collisions = findCollisions(currentFloor, getCatalogItem);
+    clearanceIssues = findClearanceIssues(currentFloor, getCatalogItem);
   }
   let bgImage: HTMLImageElement | null = $state(null);
 
@@ -1542,6 +1542,66 @@
     }
 
     // Calibration points
+    // Clearance zone and true nearest distances for the selected item (HP-403/606).
+    // Drawn only for the selection: showing every zone at once would bury the plan.
+    if (dimSettings.showClearanceZones && currentFloor && currentSelectedId) {
+      const selected = currentFloor.furniture.find((f) => f.id === currentSelectedId);
+      if (selected) {
+        const zoneInfo = clearanceZonesFor(selected, getCatalogItem);
+        if (zoneInfo) {
+          const blocked = clearanceIssues.some((i) => i.ids.includes(selected.id));
+          ctx.save();
+          // Amber when satisfied, red when something is in the way.
+          ctx.fillStyle = blocked ? 'rgba(220,38,38,0.10)' : 'rgba(245,158,11,0.10)';
+          ctx.strokeStyle = blocked ? 'rgba(220,38,38,0.55)' : 'rgba(245,158,11,0.5)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 3]);
+          ctx.beginPath();
+          zoneInfo.zone.forEach((p, i) => {
+            const sp = worldToScreen(p.x, p.y);
+            if (i === 0) ctx.moveTo(sp.x, sp.y); else ctx.lineTo(sp.x, sp.y);
+          });
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Label the rule so the zone is self-explanatory rather than a mystery rectangle.
+          const mid = zoneInfo.zone.reduce((a, p) => ({ x: a.x + p.x / 4, y: a.y + p.y / 4 }), { x: 0, y: 0 });
+          const sp = worldToScreen(mid.x, mid.y);
+          ctx.fillStyle = blocked ? '#b91c1c' : '#b45309';
+          ctx.font = '10px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(`${zoneInfo.rule.label} ${zoneInfo.rule.depthCm}cm`, sp.x, sp.y);
+          ctx.restore();
+        }
+
+        // Nearest wall and neighbour, measured between the true rotated footprints — the older
+        // overlay used axis-aligned boxes, so a rotated item's distances were measured from a
+        // box it does not occupy.
+        const near = nearestDistances(currentFloor, selected.id, getCatalogItem);
+        if (near) {
+          ctx.save();
+          ctx.strokeStyle = '#0ea5e9';
+          ctx.fillStyle = '#0369a1';
+          ctx.lineWidth = 1;
+          ctx.font = '10px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          for (const pair of [near.nearestWall, near.nearestFurniture]) {
+            if (!pair || pair.distance <= 0.5) continue;
+            const a = worldToScreen(pair.from.x, pair.from.y);
+            const b = worldToScreen(pair.to.x, pair.to.y);
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.stroke();
+            ctx.fillText(formatLength(pair.distance, dimSettings.units), (a.x + b.x) / 2, (a.y + b.y) / 2 - 3);
+          }
+          ctx.restore();
+        }
+      }
+    }
+
     // Outline anything involved in a fit problem. Warnings must be visible but must never block
     // deliberate placement (PRD 16), so this is an outline and a message — nothing is prevented.
     if (collisions.length > 0 && currentFloor) {
@@ -4040,12 +4100,12 @@
   <div class="absolute bottom-2 right-2 bg-white/80 rounded px-2 py-1 text-xs text-gray-500 flex gap-3">
     {#if detectedRooms.length > 0}
       <span>{detectedRooms.length} room{detectedRooms.length !== 1 ? 's' : ''}</span>
-      {#if collisions.length > 0}
+      {#if collisions.length + clearanceIssues.length > 0}
         <!-- Advisory, not a blocker: the count is clickable-looking but placement is untouched. -->
         <span
           class="text-red-600 font-medium"
-          title={collisions.map((c) => c.message).join('\n')}
-        >⚠ {collisions.length} fit issue{collisions.length !== 1 ? 's' : ''}</span>
+          title={[...collisions, ...clearanceIssues].map((c) => c.message).join('\n')}
+        >⚠ {collisions.length + clearanceIssues.length} fit issue{collisions.length + clearanceIssues.length !== 1 ? 's' : ''}</span>
       {/if}
       <span>{formatArea(detectedRooms.reduce((s, r) => s + r.area, 0), $projectSettings.units)}</span>
       <span class="text-gray-300">|</span>

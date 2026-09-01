@@ -253,8 +253,8 @@ prevent.
 | Per-item dimensions — hit testing / selection | Working | `code` | Fixed (HP-203) — see §3.1 |
 | Per-item dimensions — zoom-to-fit bounds | Working | `code` | Fixed; previously ignored item scale |
 | Collision detection | Working | `test` + `e2e` | HP-601/602/603/604 — oriented, rotation-aware; see §3.3 |
-| Clearance zones | Broken | `code` | **Does not exist** — HP-605 |
-| Nearest-distance overlay | Partially working | `code` | Still axis-aligned; oriented bounds now exist to fix it — see §3.2 |
+| Clearance zones | Working | `test` + `e2e` | HP-605/606 — PRD presets, drawn for the selection; see §3.4 |
+| Nearest-distance overlay | Working | `test` + `e2e` | HP-403 — true polygon distance, rotation-aware; see §3.4 |
 | Custom furniture (dimension-only) | Broken | `code` | Not found — HP-504 |
 | GLB/GLTF user import | Broken | `code` | Loader exists for built-ins; no user import — HP-506 |
 | Favorites / recently used | Not verified | `none` | HP-503 |
@@ -343,6 +343,43 @@ swing normal is derived from the wall vector. So `flipSide` is the only control,
 indicates which way is "into the room". Two of my own tests got this wrong before I traced the
 arithmetic. A user will hit the same confusion; the fix is probably to label the control by
 result ("opens into room") rather than by flip state.
+
+### 3.4 Distances and clearance (HP-403 / 605 / 606)
+
+"These do not overlap" is a weak answer. What decides whether a room works is whether you can
+walk past the bed and open the wardrobe. `src/lib/domain/clearance.ts` answers that.
+
+**True polygon distance (HP-403).** `closestPairBetween` returns the closest *pair of points*
+between two rotated footprints, not just a number, so the overlay draws the measurement exactly
+where it was taken — which is what lets it agree with the manual measure tool rather than
+approximately match it. This replaces the axis-aligned arithmetic noted in §3.2, where a rotated
+item's distances were measured from a box it does not occupy.
+
+**Clearance zones (HP-605).** The PRD's presets: kitchen aisle 100 cm, wardrobe opening 90 cm,
+dining chair pull-out 75 cm, bed side circulation 60 cm.
+
+Deliberately **not applied to everything**. A universal circulation rule would flag every side
+table in the house, and a warning that fires constantly is one the user stops reading — at which
+point the real ones go unnoticed too. Only furniture that genuinely needs space in front of it
+gets a rule.
+
+**Only the front zone is tested**, which is what keeps this correct: a wardrobe backed against the
+wall behind it is exactly how wardrobes are placed, and flagging that would be wrong. "Front" is
+the item's local +depth face — furniture carries no explicit facing, so a convention was
+unavoidable, and +depth matches how the catalog defines depth.
+
+**Overlay (HP-606).** The zone is drawn for the selected item only — every zone at once would bury
+the plan — amber when satisfied, red when blocked, labelled with the rule and its distance so it
+is not a mystery rectangle. Nearest wall and neighbour distances are drawn alongside. Clearance
+shares the collision cache, so it is recomputed on geometry change rather than per frame.
+
+Warnings only: an E2E spec asserts the furniture does not move when a clearance warning fires.
+
+#### An incidental DRY fix
+
+Adding a settings field broke the build in two places, because `FloorPlanCanvas` and
+`SettingsDialog` each held their own copy of the defaults literal. The compiler caught it, but
+only after the fact. `DEFAULT_PROJECT_SETTINGS` is now exported and both spread from it.
 
 ## 4. Architecture editing
 
@@ -687,7 +724,7 @@ the spec now provokes a change rather than expecting frames while idle.
 | `svelte-check` | Partially working | 6 errors, 25 warnings — all 6 from one cause, below |
 | Unit test runner | Working | Vitest; 184 tests |
 | CI | Working | GitHub Actions: check (no-regression), test, build |
-| E2E tests | Partially working | Playwright configured; 66 specs cover storage, Three.js lifecycle, PDF import, calibration, snap extraction, trace shortcuts, exact dimensions and fit warnings. Rendering fidelity, walkthrough and export still uncovered |
+| E2E tests | Partially working | Playwright configured; 69 specs cover storage, Three.js lifecycle, PDF import, calibration, snap extraction, trace shortcuts, exact dimensions, fit warnings and clearance. Rendering fidelity, walkthrough and export still uncovered |
 | Ad-hoc root test scripts | Partially working | `test-room-polygons.ts`, `test-orthogonal.ts`, `test-furniture-rotation.ts` are `npx tsx` scripts that print to stdout — not runnable in CI. Worth porting into the Vitest suite alongside HP-201. |
 
 ### The 6 `svelte-check` errors
@@ -722,6 +759,8 @@ but it needs that check first, so it is not bundled into the foundation work.
 | Opening offsets clamped to 5% of the wall, refusing real dimensions (§4.2) | Clamped to the opening's own edges; a door flush to a corner is now expressible |
 | Wall length editing always moved the far end (§4.2) | Start/Center/End anchors |
 | No collision detection at all (§3.3) | Rotation-aware furniture/furniture, furniture/wall and door-swing warnings, reported with overlap area |
+| Distance overlay measured from axis-aligned boxes (§3.4) | True polygon distance between rotated footprints |
+| No clearance concept (§3.4) | PRD presets, front-zone only, drawn and labelled for the selection |
 | X-junctions detected **0 rooms** on a four-quadrant plan (§2) | All ten fixtures pass |
 | Hit testing ignored per-item dimensions (§3.1) | One shared resolver across all six consumers |
 | Room reconciliation needed exact wall-set equality and dropped 3 of 5 authored fields (§2.1) | Similarity matching in a tested domain module; all authored fields carried |

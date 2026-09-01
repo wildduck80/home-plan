@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { projectSettings } from '$lib/stores/settings';
+  import { projectSettings, DEFAULT_PROJECT_SETTINGS } from '$lib/stores/settings';
   import type { ProjectSettings } from '$lib/stores/settings';
   import { currentProject, updateProjectName } from '$lib/stores/project';
   import type { Project } from '$lib/models/types';
@@ -86,18 +86,8 @@
 
   let currentTheme = $state<ThemePreference>('system');
   themePreference.subscribe((t) => { currentTheme = t; });
-  let settings = $state<ProjectSettings>({
-    units: 'metric',
-    showDimensions: true,
-    showExternalDimensions: true,
-    showInternalDimensions: false,
-    showExtensionLines: true,
-    showObjectDistance: true,
-    dimensionLineColor: '#1e293b',
-    wallMeasureMode: 'centerline',
-    snapToGrid: true,
-    gridSize: 25,
-  });
+  // Seeded from the canonical defaults; the store overwrites this on first subscribe.
+  let settings = $state<ProjectSettings>({ ...DEFAULT_PROJECT_SETTINGS });
 
   projectSettings.subscribe((s) => { settings = { ...s }; });
 
