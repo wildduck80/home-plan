@@ -252,9 +252,9 @@ prevent.
 | Per-item dimensions — distance overlay | Working | `code` | Uses `resolveFurnitureDimensions` |
 | Per-item dimensions — hit testing / selection | Working | `code` | Fixed (HP-203) — see §3.1 |
 | Per-item dimensions — zoom-to-fit bounds | Working | `code` | Fixed; previously ignored item scale |
-| Collision detection | Broken | `code` | **Does not exist** — HP-601…604 |
+| Collision detection | Working | `test` + `e2e` | HP-601/602/603/604 — oriented, rotation-aware; see §3.3 |
 | Clearance zones | Broken | `code` | **Does not exist** — HP-605 |
-| Nearest-distance overlay | Partially working | `code` | Exists, but axis-aligned only — see §3.2 |
+| Nearest-distance overlay | Partially working | `code` | Still axis-aligned; oriented bounds now exist to fix it — see §3.2 |
 | Custom furniture (dimension-only) | Broken | `code` | Not found — HP-504 |
 | GLB/GLTF user import | Broken | `code` | Loader exists for built-ins; no user import — HP-506 |
 | Favorites / recently used | Not verified | `none` | HP-503 |
@@ -303,6 +303,46 @@ HP-403 is therefore an upgrade of working code, not a new feature — and HP-601
 bounds utility is its prerequisite.
 
 ---
+
+### 3.3 Fit warnings (HP-601 / 602 / 603 / 604)
+
+The PRD calls collision the highest-value differentiator, because the app exists to answer "does
+this fit". `src/lib/domain/collision.ts` provides oriented footprints and overlap tests;
+`collisionCheck.ts` scans a floor.
+
+**Warnings, never constraints.** PRD 16 requires that deliberate placement is not blocked, which
+sets the bar for reporting: a human has to agree it is a problem. A wardrobe pushed flush against
+a wall stays silent — otherwise the warnings become noise and get ignored, at which point a real
+clash goes unnoticed too. An E2E spec asserts the offending placement survives the warning.
+
+Detected: furniture against furniture, furniture crossing a wall, and furniture standing in a
+door swing. Each reports the overlap area so severity can be judged rather than every clash
+looking equally urgent.
+
+#### Decisions
+
+- **Separating axis theorem, generalised to convex polygons.** Exact, no sampling or tolerance
+  fudging. Generalising past rectangles matters because a door swing is a circular *sector* —
+  convex for a quarter turn, so it uses the same test. Approximating a swing as a square would
+  over-report at the far corner, and the fastest way to get a warning system ignored is to have it
+  cry wolf.
+- **Touching is not overlapping.** Flush placement is a normal arrangement, so edges and corners
+  in contact are excluded, with an epsilon absorbing rotation round-off.
+- **Doors without a swinging leaf are skipped** — sliding, pocket and plain openings cannot foul
+  anything.
+- **Detection is cached against a geometry signature**, not recomputed per frame. It is O(n²) in
+  furniture and the draw loop runs on every pointer move, so per-frame recomputation would make
+  dragging progressively slower on a busy floor.
+- **Unknown catalog ids are skipped, not thrown on** — a project can reference an entry a later
+  build renamed.
+
+#### An observation worth acting on later
+
+Which side a door opens to depends on the **direction its host wall was drawn**, because the
+swing normal is derived from the wall vector. So `flipSide` is the only control, and nothing
+indicates which way is "into the room". Two of my own tests got this wrong before I traced the
+arithmetic. A user will hit the same confusion; the fix is probably to label the control by
+result ("opens into room") rather than by flip state.
 
 ## 4. Architecture editing
 
@@ -647,7 +687,7 @@ the spec now provokes a change rather than expecting frames while idle.
 | `svelte-check` | Partially working | 6 errors, 25 warnings — all 6 from one cause, below |
 | Unit test runner | Working | Vitest; 184 tests |
 | CI | Working | GitHub Actions: check (no-regression), test, build |
-| E2E tests | Partially working | Playwright configured; 60 specs cover storage, Three.js lifecycle, PDF import, calibration, snap extraction, trace shortcuts and exact dimensions. Rendering fidelity, walkthrough and export still uncovered |
+| E2E tests | Partially working | Playwright configured; 66 specs cover storage, Three.js lifecycle, PDF import, calibration, snap extraction, trace shortcuts, exact dimensions and fit warnings. Rendering fidelity, walkthrough and export still uncovered |
 | Ad-hoc root test scripts | Partially working | `test-room-polygons.ts`, `test-orthogonal.ts`, `test-furniture-rotation.ts` are `npx tsx` scripts that print to stdout — not runnable in CI. Worth porting into the Vitest suite alongside HP-201. |
 
 ### The 6 `svelte-check` errors
@@ -681,6 +721,7 @@ but it needs that check first, so it is not bundled into the foundation work.
 | No way to trace accurately over a PDF (§6.3) | 63k line fragments merged to ~700 snap targets; wall and calibration points land on the drawing's real geometry |
 | Opening offsets clamped to 5% of the wall, refusing real dimensions (§4.2) | Clamped to the opening's own edges; a door flush to a corner is now expressible |
 | Wall length editing always moved the far end (§4.2) | Start/Center/End anchors |
+| No collision detection at all (§3.3) | Rotation-aware furniture/furniture, furniture/wall and door-swing warnings, reported with overlap area |
 | X-junctions detected **0 rooms** on a four-quadrant plan (§2) | All ten fixtures pass |
 | Hit testing ignored per-item dimensions (§3.1) | One shared resolver across all six consumers |
 | Room reconciliation needed exact wall-set equality and dropped 3 of 5 authored fields (§2.1) | Similarity matching in a tested domain module; all authored fields carried |

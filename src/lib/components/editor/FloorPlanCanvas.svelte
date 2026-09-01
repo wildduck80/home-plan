@@ -8,6 +8,8 @@
   import { getCatalogItem } from '$lib/utils/furnitureCatalog';
   import { resolveFurnitureDimensions, furnitureHalfExtents } from '$lib/domain/furniture';
   import { buildSnapIndex, findSnapTarget, type SnapIndex } from '$lib/import/reference/snapGeometry';
+  import { findCollisions, type Collision } from '$lib/domain/collisionCheck';
+  import { rectCorners, orientedBounds } from '$lib/domain/collision';
   import { imageToWorld, worldToImage } from '$lib/import/reference/referenceSpace';
   import { reconcileDetectedRooms } from '$lib/domain/rooms';
   import { drawFurnitureIcon } from '$lib/utils/furnitureIcons';
@@ -165,6 +167,28 @@
   let refSnapSource: unknown = null;
   /** Where the cursor last snapped to reference line work, for the on-canvas indicator. */
   let refSnapHit: Point | null = $state(null);
+  /** Fit problems on the active floor (HP-602/603/604). Warnings only — never blocking. */
+  let collisions: Collision[] = $state([]);
+  let collisionSignature = '';
+
+  /**
+   * Refresh the collision list when the geometry it depends on changes.
+   *
+   * Keyed on a signature rather than recomputed every frame: detection is O(n²) in furniture and
+   * the draw loop runs on every pointer move, so recomputing per frame would make dragging
+   * furniture progressively slower on a busy floor.
+   */
+  function refreshCollisions() {
+    if (!currentFloor) { collisions = []; return; }
+    const signature = JSON.stringify([
+      currentFloor.furniture.map(f => [f.id, f.position.x, f.position.y, f.rotation, f.width, f.depth, f.scale?.x, f.scale?.y]),
+      currentFloor.walls.map(w => [w.id, w.start.x, w.start.y, w.end.x, w.end.y]),
+      currentFloor.doors.map(d => [d.id, d.wallId, d.position, d.width, d.type, d.swingDirection, d.flipSide])
+    ]);
+    if (signature === collisionSignature) return;
+    collisionSignature = signature;
+    collisions = findCollisions(currentFloor, getCatalogItem);
+  }
   let bgImage: HTMLImageElement | null = $state(null);
 
   // Room label drag state
@@ -1177,6 +1201,7 @@
   }
 
   function draw() {
+    refreshCollisions();
     if (!ctx) return;
     if (!canvasDirty) { requestAnimationFrame(draw); return; }
     canvasDirty = false;
@@ -1517,6 +1542,31 @@
     }
 
     // Calibration points
+    // Outline anything involved in a fit problem. Warnings must be visible but must never block
+    // deliberate placement (PRD 16), so this is an outline and a message — nothing is prevented.
+    if (collisions.length > 0 && currentFloor) {
+      const offenders = new Set(collisions.flatMap((c) => c.ids));
+      ctx.save();
+      ctx.strokeStyle = '#dc2626';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      for (const fi of currentFloor.furniture) {
+        if (!offenders.has(fi.id)) continue;
+        const cat = getCatalogItem(fi.catalogId);
+        if (!cat) continue;
+        const corners = rectCorners(orientedBounds(fi, cat));
+        ctx.beginPath();
+        corners.forEach((c, i) => {
+          const sp = worldToScreen(c.x, c.y);
+          if (i === 0) ctx.moveTo(sp.x, sp.y);
+          else ctx.lineTo(sp.x, sp.y);
+        });
+        ctx.closePath();
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
     // Snap-to-reference indicator: without feedback the user cannot tell whether an endpoint
     // landed on the drawing or merely near it, which is the difference between an accurate
     // trace and a plausible-looking one.
@@ -3990,6 +4040,13 @@
   <div class="absolute bottom-2 right-2 bg-white/80 rounded px-2 py-1 text-xs text-gray-500 flex gap-3">
     {#if detectedRooms.length > 0}
       <span>{detectedRooms.length} room{detectedRooms.length !== 1 ? 's' : ''}</span>
+      {#if collisions.length > 0}
+        <!-- Advisory, not a blocker: the count is clickable-looking but placement is untouched. -->
+        <span
+          class="text-red-600 font-medium"
+          title={collisions.map((c) => c.message).join('\n')}
+        >⚠ {collisions.length} fit issue{collisions.length !== 1 ? 's' : ''}</span>
+      {/if}
       <span>{formatArea(detectedRooms.reduce((s, r) => s + r.area, 0), $projectSettings.units)}</span>
       <span class="text-gray-300">|</span>
     {/if}
