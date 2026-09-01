@@ -13,6 +13,9 @@
   import { currentProject, loadProject } from '$lib/stores/project';
 
   // AreaSummaryPanel moved to top bar dialog
+  import { isPdfFile } from '$lib/import/pdf/renderPlan';
+  import PdfImportDialog from '$lib/components/import/PdfImportDialog.svelte';
+
   let activeTab = $state<'draw' | 'rooms' | 'objects'>('draw');
   let constructionOpen = $state(true);
   let selectedCategory = $state<string>('All');
@@ -28,6 +31,9 @@
 
   // RoomPlan import dialog state
   let showImportDialog = $state(false);
+  // PDF reference import (HP-301) — a page must be chosen before rasterizing.
+  let pdfDialogOpen = $state(false);
+  let pdfFile: File | null = $state(null);
   let importFileName = $state('');
   let importJsonData: any = $state(null);
   let optStraighten = $state(true);
@@ -202,28 +208,40 @@
     placingFurnitureId.set(null);
   }
 
+  /** Attach a rasterized reference image to the active floor. */
+  function applyReferenceImage(dataUrl: string) {
+    setBackgroundImage({
+      dataUrl,
+      position: { x: 0, y: 0 },
+      scale: 1,
+      opacity: 0.4,
+      rotation: 0,
+      locked: false,
+    });
+  }
+
   function onImportImage() {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = 'image/*';
+    // PDFs go through the page picker; raster images are attached directly. Both `.pdf` and the
+    // mime type are listed because some platforms report an empty type for PDFs.
+    input.accept = 'image/*,application/pdf,.pdf';
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
+
+      if (isPdfFile(file)) {
+        // A multi-page architect set needs a page chosen before anything can be rasterized.
+        pdfFile = file;
+        pdfDialogOpen = true;
+        return;
+      }
+
       if (file.size > 5 * 1024 * 1024) {
         alert('Warning: Image is larger than 5MB. This may slow down the application.');
       }
       const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result as string;
-        setBackgroundImage({
-          dataUrl,
-          position: { x: 0, y: 0 },
-          scale: 1,
-          opacity: 0.4,
-          rotation: 0,
-          locked: false,
-        });
-      };
+      reader.onload = () => applyReferenceImage(reader.result as string);
       reader.readAsDataURL(file);
     };
     input.click();
@@ -329,6 +347,8 @@
     'Plumbing': '#0ea5e9',
   };
 </script>
+
+<PdfImportDialog bind:open={pdfDialogOpen} file={pdfFile} onImport={applyReferenceImage} />
 
 <div class="w-64 bg-white border-r border-gray-200 flex flex-col h-full overflow-hidden">
   <!-- Tabs -->

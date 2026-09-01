@@ -348,16 +348,60 @@ measuring once real multi-floor houses with background images exist.
 
 | Capability | Status | Evidence | Notes |
 |---|---|---|---|
-| Background image (PNG/JPG) | Partially working | `code` | `BackgroundImage` stored as inline data URL — see §1.1 |
+| Background image (PNG/JPG) | Working | `e2e` | Inline data URL; a missing redraw-on-load was fixed — see §6.1 |
 | Background transform (position/scale/rotation/opacity/lock) | Partially working | `code` | All five fields exist and round-trip (`test`) |
 | Background brightness / contrast | Broken | `code` | Not in the type — HP-302 |
 | Scale calibration | Partially working | `code` | `calibrationMode` + `calibrationPoints` exist; accuracy unverified — HP-303 |
-| **PDF import** | Broken | `code` | **Does not exist.** `jspdf` is export-only — HP-301 |
+| **PDF import** | Working | `test` + `e2e` | HP-301 done — page picker, resolution presets, verified against the real architect PDF; see §6.1 |
 | Trace mode | Broken | `code` | Not found — HP-304 |
 | Apple RoomPlan import | Not verified | `code` | Substantial implementation; ad-hoc scripts exist (§8) |
 | DXF / SVG import | Broken | `code` | Export only |
 
 ---
+
+### 6.1 PDF import (HP-301)
+
+Built and verified against a real architect PDF — a single-page A4 CAD export with ~9,900
+vector paths — plus a committed synthetic permit set that mirrors its shape (paperwork first,
+drawings last, mixed A4/A3).
+
+`src/lib/import/pdf/` holds it. All pdf.js contact is confined to `pdfDocument.ts`, so the
+editor still consumes a plain data URL, per the ticket's technical note. `renderPlan.ts` holds
+the rasterization arithmetic with no pdf.js dependency, which is why it can be unit-tested
+without a browser.
+
+Decisions worth knowing:
+
+- **pdf.js is dynamically imported.** It is a 408 KB chunk plus a 1.2 MB worker, and most
+  sessions never open a PDF. Verified by build inspection: no static import of the chunk
+  exists, so it stays out of the initial bundle.
+- **The worker URL uses Vite's `?url` suffix**, so it is emitted and hashed as a real asset.
+  A CDN URL would break offline use, which matters for a local-first app.
+- **Pages are ranked, not just listed.** A permit set puts the drawings at the end — pages
+  28-36 of 36 in the real set — so pages with substantial vector content are badged `PLAN` and
+  the first one is preselected. Defaulting to page 1 would land on a cover sheet.
+- **Resolution is expressed as pixels along the long edge**, not DPI, because these sets mix A4
+  with A3 and DPI would mean something different per sheet. The default reaches ~150 DPI on A4,
+  below which the small dimension text stops being legible.
+- **Canvas area is clamped** to 16M pixels. Browsers cap canvas size and *silently return a
+  blank canvas* rather than erroring, which would look like a broken import. An A3 sheet at
+  300 DPI is ~17.4M pixels and would have crossed it.
+
+#### Pre-existing bug found and fixed
+
+The reference image was invisible until some unrelated interaction happened to repaint the
+canvas. `FloorPlanCanvas` sets `bgImage` in `img.onload` but never called `markDirty()`, and the
+2D canvas only repaints when marked dirty. This affected the **existing raster import path**
+too, not just PDFs — it was simply easier to notice with a plan-sized image. Also added an
+`onerror` path, so an undecodable reference now reports rather than leaving a stale image.
+
+#### Still outstanding for the trace workflow
+
+HP-301 covers import only. Calibration (HP-303) is the next step and the accuracy-critical one:
+the real plan has **no text layer** — labels are flattened to vector paths — so dimensions
+cannot be extracted programmatically and scale must be set from a known distance. The plan's own
+dimension chains give a self-checking test: calibrate on the 1120 cm chain, then the 1000 cm
+chain must measure 1000.
 
 ## 7. Rendering, view and export
 
@@ -441,7 +485,7 @@ the spec now provokes a change rather than expecting frames while idle.
 | `svelte-check` | Partially working | 6 errors, 25 warnings — all 6 from one cause, below |
 | Unit test runner | Working | Vitest; 184 tests |
 | CI | Working | GitHub Actions: check (no-regression), test, build |
-| E2E tests | Partially working | Playwright configured; 22 specs cover the storage flow and Three.js lifecycle. Rendering fidelity, walkthrough and export still uncovered |
+| E2E tests | Partially working | Playwright configured; 33 specs cover storage, Three.js lifecycle and PDF import. Rendering fidelity, walkthrough and export still uncovered |
 | Ad-hoc root test scripts | Partially working | `test-room-polygons.ts`, `test-orthogonal.ts`, `test-furniture-rotation.ts` are `npx tsx` scripts that print to stdout — not runnable in CI. Worth porting into the Vitest suite alongside HP-201. |
 
 ### The 6 `svelte-check` errors
@@ -469,6 +513,8 @@ but it needs that check first, so it is not bundled into the foundation work.
 | Quota exhaustion deleted every other project (§1.1) | Prunes only regenerable thumbnails, then fails loudly with an export action; stored projects untouched |
 | Scene rebuilds leaked ~12.5 GPU textures each, unbounded (§7.1) | Flat across 24 rebuilds; shared disposal helper disposes textures too |
 | WebGL contexts never released — 3D view would break after ~15 view toggles (§7.1) | Contexts released on unmount; 2 live after 10 toggles |
+| No PDF import at all (§6.1) | Page picker with drawing detection and resolution presets, verified on the real architect plan |
+| Reference images stayed invisible until an unrelated repaint (§6.1) | Redraw triggered on image load; also fixes the pre-existing raster path |
 | X-junctions detected **0 rooms** on a four-quadrant plan (§2) | All ten fixtures pass |
 | Hit testing ignored per-item dimensions (§3.1) | One shared resolver across all six consumers |
 | Room reconciliation needed exact wall-set equality and dropped 3 of 5 authored fields (§2.1) | Similarity matching in a tested domain module; all authored fields carried |

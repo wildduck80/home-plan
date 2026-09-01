@@ -92,6 +92,7 @@ awkward edge cases.
 | `idb` | runtime | HP-105 | Promise wrapper for IndexedDB; transaction lifetimes are subtle enough to be worth a maintained library |
 | `fake-indexeddb` | dev | HP-105 | Spec-faithful IndexedDB in Node, so storage tests need no browser |
 | `@playwright/test` | dev | PRD §26.3 | E2E in a real browser; the framework the PRD specifies |
+| `pdfjs-dist` | runtime | HP-301 | Renders PDF pages to a canvas for the reference layer; dynamically imported so it stays out of the initial bundle |
 
 ---
 

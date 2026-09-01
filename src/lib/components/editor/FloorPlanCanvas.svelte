@@ -1780,10 +1780,22 @@
     const unsub14 = activeFloor.subscribe((f) => {
       if (f?.backgroundImage?.dataUrl && (!bgImage || bgImage.src !== f.backgroundImage.dataUrl)) {
         const img = new Image();
-        img.onload = () => { bgImage = img; };
+        img.onload = () => {
+          bgImage = img;
+          // The canvas only repaints when marked dirty, and decoding finishes long after this
+          // subscription ran — without this the reference stays invisible until some unrelated
+          // interaction happens to trigger a redraw.
+          markDirty();
+        };
+        img.onerror = () => {
+          console.error('[FloorPlanCanvas] Could not decode the reference image.');
+          bgImage = null;
+          markDirty();
+        };
         img.src = f.backgroundImage.dataUrl;
       } else if (!f?.backgroundImage) {
         bgImage = null;
+        markDirty();
       }
     });
 
