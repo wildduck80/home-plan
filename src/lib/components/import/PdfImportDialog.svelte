@@ -17,7 +17,7 @@
   }: {
     open: boolean;
     file: File | null;
-    onImport: (dataUrl: string) => void;
+    onImport: (dataUrl: string, snapSegments: { x1: number; y1: number; x2: number; y2: number }[]) => void;
   } = $props();
 
   let doc: LoadedPdf | null = $state(null);
@@ -106,7 +106,7 @@
 
     try {
       const result = await doc.renderPage(selectedPage, targetLongEdgePx);
-      onImport(result.dataUrl);
+      onImport(result.dataUrl, result.snapSegments);
       open = false;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Could not render this page.';

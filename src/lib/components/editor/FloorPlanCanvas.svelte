@@ -7,6 +7,8 @@
   import { getMaterial } from '$lib/utils/materials';
   import { getCatalogItem } from '$lib/utils/furnitureCatalog';
   import { resolveFurnitureDimensions, furnitureHalfExtents } from '$lib/domain/furniture';
+  import { buildSnapIndex, findSnapTarget, type SnapIndex } from '$lib/import/reference/snapGeometry';
+  import { imageToWorld, worldToImage } from '$lib/import/reference/referenceSpace';
   import { reconcileDetectedRooms } from '$lib/domain/rooms';
   import { drawFurnitureIcon } from '$lib/utils/furnitureIcons';
   import { handleGlobalShortcut } from '$lib/utils/shortcuts';
@@ -158,6 +160,11 @@
   let calPoints: Point[] = $state([]);
   /** Set when an import asks for the view to be framed once the reference decodes. */
   let fitReferenceOnLoad = false;
+  /** Snap targets from the reference PDF, in image-pixel space. Built lazily, keyed by identity. */
+  let refSnapIndex: SnapIndex | null = null;
+  let refSnapSource: unknown = null;
+  /** Where the cursor last snapped to reference line work, for the on-canvas indicator. */
+  let refSnapHit: Point | null = $state(null);
   let bgImage: HTMLImageElement | null = $state(null);
 
   // Room label drag state
@@ -314,6 +321,62 @@
     return Math.round(v / step) * step;
   }
 
+  /** The frame describing how the reference image maps to world space, or null. */
+  function referenceFrame() {
+    const bg = currentFloor?.backgroundImage;
+    if (!bg || !bgImage) return null;
+    return {
+      position: bg.position,
+      scale: bg.scale,
+      rotation: bg.rotation,
+      imageWidth: bgImage.width,
+      imageHeight: bgImage.height
+    };
+  }
+
+  /**
+   * Snap a world point onto the reference plan's own line work (HP-304).
+   *
+   * The whole reason tracing over a PDF is imprecise is that the eye cannot place a click on a
+   * hairline. The extracted segments give exact targets, so the user clicks approximately and the
+   * endpoint lands on the drawing. Returns the input unchanged when there is nothing near.
+   *
+   * The search radius is expressed in screen pixels and converted to world units, so it feels the
+   * same at every zoom level rather than becoming unusable when zoomed in.
+   *
+   * Returns null when nothing is in range, so callers can distinguish a real hit from a
+   * pass-through and fall back to grid snapping.
+   */
+  function snapToReference(wp: Point): Point | null {
+    if (!currentSnapEnabled) return null;
+
+    const bg = currentFloor?.backgroundImage;
+    const segments = bg?.snapSegments;
+    if (!bg || !segments || segments.length === 0) { refSnapHit = null; return null; }
+
+    const frame = referenceFrame();
+    if (!frame) { refSnapHit = null; return null; }
+
+    // Rebuild only when the segment array itself changes — identity compare is enough because
+    // the array is replaced wholesale on import.
+    if (refSnapSource !== segments) {
+      refSnapIndex = buildSnapIndex(segments);
+      refSnapSource = segments;
+    }
+    if (!refSnapIndex) { refSnapHit = null; return null; }
+
+    const SNAP_RADIUS_SCREEN_PX = 12;
+    // Image pixels per screen pixel: bg.scale converts image px to world cm, zoom world to screen.
+    const radiusInImagePx = SNAP_RADIUS_SCREEN_PX / Math.max(zoom * bg.scale, 1e-6);
+
+    const hit = findSnapTarget(refSnapIndex, worldToImage(frame, wp), radiusInImagePx);
+    if (!hit) { refSnapHit = null; return null; }
+
+    const world = imageToWorld(frame, hit.point);
+    refSnapHit = world;
+    return world;
+  }
+
   function screenToWorld(sx: number, sy: number): Point {
     return { x: (sx - width / 2) / zoom + camX, y: (sy - height / 2) / zoom + camY };
   }
@@ -340,8 +403,13 @@
   }
 
   function magneticSnap(p: Point, excludeWallIds?: Set<string>): Point & { snappedToEndpoint?: boolean; snappedToWall?: boolean; snappedWallId?: string } {
-    if (!currentFloor) return { x: snap(p.x), y: snap(p.y) };
-    let best: Point & { snappedToEndpoint?: boolean; snappedToWall?: boolean; snappedWallId?: string } = { x: snap(p.x), y: snap(p.y) };
+    // Priority: existing wall endpoints, then the reference plan's line work, then the grid.
+    // Endpoints come first because closing up against already-drawn geometry is what makes rooms
+    // detect; the reference beats the grid because a 25cm grid cannot land on a real wall face.
+    const referencePoint = snapToReference(p);
+    const fallback = referencePoint ?? { x: snap(p.x), y: snap(p.y) };
+    if (!currentFloor) return fallback;
+    let best: Point & { snappedToEndpoint?: boolean; snappedToWall?: boolean; snappedWallId?: string } = { ...fallback };
     let bestDist = MAGNETIC_SNAP / zoom;
     // First pass: snap to endpoints (highest priority)
     for (const w of currentFloor.walls) {
@@ -1433,6 +1501,25 @@
     }
 
     // Calibration points
+    // Snap-to-reference indicator: without feedback the user cannot tell whether an endpoint
+    // landed on the drawing or merely near it, which is the difference between an accurate
+    // trace and a plausible-looking one.
+    if (refSnapHit && (currentTool === 'wall' || isCalibrating)) {
+      const sp = worldToScreen(refSnapHit.x, refSnapHit.y);
+      ctx.save();
+      ctx.strokeStyle = '#f97316';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, 6, 0, Math.PI * 2);
+      ctx.stroke();
+      // Crosshair, so the exact point is unambiguous at any zoom.
+      ctx.beginPath();
+      ctx.moveTo(sp.x - 9, sp.y); ctx.lineTo(sp.x + 9, sp.y);
+      ctx.moveTo(sp.x, sp.y - 9); ctx.lineTo(sp.x, sp.y + 9);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     if (isCalibrating && calPoints.length > 0) {
       ctx.fillStyle = '#ef4444';
       for (const pt of calPoints) {
@@ -2240,11 +2327,15 @@
     // the resulting scale, no way to adjust a misplaced point, and no cancel. CalibrationOverlay
     // now owns everything after the second click (HP-303).
     if (isCalibrating) {
+      // Snap calibration clicks to the drawing's own line work. These two points set the scale
+      // for everything downstream, so landing exactly on a dimension line matters more here
+      // than anywhere else.
+      const calPoint = snapToReference(wp) ?? { x: wp.x, y: wp.y };
       calibrationPoints.update(pts => {
         // Two points is the whole measurement; further clicks restart it, so a misplaced
         // second point does not force the user to cancel and begin again.
-        if (pts.length >= 2) return [{ x: wp.x, y: wp.y }];
-        return [...pts, { x: wp.x, y: wp.y }];
+        if (pts.length >= 2) return [{ x: calPoint.x, y: calPoint.y }];
+        return [...pts, { x: calPoint.x, y: calPoint.y }];
       });
       return;
     }

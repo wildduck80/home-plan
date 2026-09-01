@@ -353,7 +353,7 @@ measuring once real multi-floor houses with background images exist.
 | Background brightness / contrast | Broken | `code` | Not in the type — HP-302 |
 | Scale calibration | Working | `test` + `e2e` | HP-303 done — two-point flow with live preview, Esc cancel, persisted record; see §6.2 |
 | **PDF import** | Working | `test` + `e2e` | HP-301 done — page picker, resolution presets, verified against the real architect PDF; see §6.1 |
-| Trace mode | Broken | `code` | Not found — HP-304 |
+| Trace mode — snap to PDF line work | Working | `test` + `e2e` | HP-304 core; reference locked on import — see §6.3 |
 | Apple RoomPlan import | Not verified | `code` | Substantial implementation; ad-hoc scripts exist (§8) |
 | DXF / SVG import | Broken | `code` | Export only |
 
@@ -455,6 +455,60 @@ covers a different number of image pixels — so re-measuring the same *world* s
 the same distance legitimately produces a different scale. Idempotence holds when the same
 *feature* is re-measured, which is what the unit suite asserts.
 
+### 6.3 Snap-to-reference tracing (HP-304 core)
+
+A CAD-exported plan contains no walls, only line work — and heavily fragmented line work.
+Measured on the real architect PDF: **63,008 segments, median length 0.9 pt**, because every wall
+is drawn as many short collinear pieces. 61% are axis-aligned, so the drawing is orthogonal.
+
+`mergeCollinearRuns` collapses them at import:
+
+```text
+63,008 raw segments  ->  699 merged lines (>=25cm)  in 65ms
+                         574 axis-aligned
+                         163 at wall scale (>=100cm)
+                         54 KB stored
+```
+
+#### The deliberate non-goal: no classification
+
+Nothing here decides which lines are walls, which are dimension chains and which are furniture.
+That is the hard, error-prone part, and being wrong fills a plan with confidently-wrong walls
+that cost more to clean up than tracing from scratch — which is why the PRD parks automatic
+extraction at P3 (HP-1103).
+
+Offering the lines as **snap targets** instead means the user picks by clicking, so an irrelevant
+candidate costs nothing. Most of the accuracy benefit, almost none of the risk.
+
+#### Design decisions
+
+- **Targets are stored in image-pixel space**, not world space (`referenceSpace.ts`). Calibration
+  changes the reference's scale and position, so world coordinates would go stale the instant the
+  user calibrated. Pixel coordinates stay attached to the drawing through every transform.
+- **Extraction is seeded with pdf.js's own render viewport matrix.** That guarantees the segments
+  land exactly where the corresponding pixels were painted, y-flip included. Doing the arithmetic
+  independently would risk snap points sitting a fraction off the line work — worse than no
+  snapping.
+- **Snap priority is: existing wall endpoints, then reference line work, then the grid.** Endpoints
+  first because closing up against drawn geometry is what makes rooms detect; the reference beats
+  the grid because a 25 cm grid cannot land on a real wall face.
+- **Calibration clicks snap too.** Those two points set the scale for everything downstream, so
+  precision matters more there than anywhere else.
+- **The search radius is in screen pixels**, converted to world units per query, so it feels the
+  same at every zoom rather than becoming unusable when zoomed in.
+- **A spatial grid backs the queries.** A linear scan would be thousands of distance checks per
+  cursor move; a timing test guards against regressing to one.
+- **The reference is locked on import** — a backdrop to trace over gets dragged the moment the
+  user reaches for a wall.
+- An orange crosshair marks an active snap, because otherwise the user cannot tell whether an
+  endpoint landed *on* the drawing or merely near it.
+
+#### Still outstanding from HP-304
+
+The snapping core is in. Not yet done: a dedicated trace mode toggle, an opacity hotkey, a
+hide/show reference shortcut, stronger angle constraints, and the magnifier (HP-305). The
+click-count comparison the ticket asks for has not been measured.
+
 ## 7. Rendering, view and export
 
 | Capability | Status | Evidence | Notes |
@@ -537,7 +591,7 @@ the spec now provokes a change rather than expecting frames while idle.
 | `svelte-check` | Partially working | 6 errors, 25 warnings — all 6 from one cause, below |
 | Unit test runner | Working | Vitest; 184 tests |
 | CI | Working | GitHub Actions: check (no-regression), test, build |
-| E2E tests | Partially working | Playwright configured; 45 specs cover storage, Three.js lifecycle, PDF import and calibration. Rendering fidelity, walkthrough and export still uncovered |
+| E2E tests | Partially working | Playwright configured; 50 specs cover storage, Three.js lifecycle, PDF import, calibration and snap extraction. Rendering fidelity, walkthrough and export still uncovered |
 | Ad-hoc root test scripts | Partially working | `test-room-polygons.ts`, `test-orthogonal.ts`, `test-furniture-rotation.ts` are `npx tsx` scripts that print to stdout — not runnable in CI. Worth porting into the Vitest suite alongside HP-201. |
 
 ### The 6 `svelte-check` errors
@@ -568,6 +622,7 @@ but it needs that check first, so it is not bundled into the foundation work.
 | No PDF import at all (§6.1) | Page picker with drawing detection and resolution presets, verified on the real architect plan |
 | Reference images stayed invisible until an unrelated repaint (§6.1) | Redraw triggered on image load; also fixes the pre-existing raster path |
 | Calibration used a blocking prompt() with no preview, cancel or record (§6.2) | Floating panel with live preview, Esc cancel, unit parsing and a persisted calibration record |
+| No way to trace accurately over a PDF (§6.3) | 63k line fragments merged to ~700 snap targets; wall and calibration points land on the drawing's real geometry |
 | X-junctions detected **0 rooms** on a four-quadrant plan (§2) | All ten fixtures pass |
 | Hit testing ignored per-item dimensions (§3.1) | One shared resolver across all six consumers |
 | Room reconciliation needed exact wall-set equality and dropped 3 of 5 authored fields (§2.1) | Similarity matching in a tested domain module; all authored fields carried |

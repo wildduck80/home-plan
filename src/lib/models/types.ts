@@ -152,6 +152,12 @@ export interface BackgroundImage {
   calibration?: ReferenceCalibration;
   /** Original file name, shown in the properties panel. */
   sourceName?: string;
+  /**
+   * Line work extracted from a vector PDF, in the reference image's **pixel** space, used as
+   * snap targets while tracing (HP-304). Pixel space rather than world space so the targets
+   * stay attached to the drawing through calibration, panning and rotation.
+   */
+  snapSegments?: { x1: number; y1: number; x2: number; y2: number }[];
 }
 
 /** A placed 2D entourage symbol (person, car, tree, …) for presentation plans */

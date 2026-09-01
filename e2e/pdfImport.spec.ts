@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { seedLegacyLocalStorage, waitForHydration } from './helpers/storage';
+import { clickUntilUrl, seedLegacyLocalStorage, waitForHydration } from './helpers/storage';
 import { legacyProject } from './helpers/legacyProject';
 
 /**
@@ -189,7 +189,9 @@ test.describe('importing a page as the reference layer', () => {
 		expect(bg!.dataUrlLength).toBeGreaterThan(20_000);
 		// Defaults that make a reference traceable rather than opaque.
 		expect(bg!.opacity).toBeCloseTo(0.4, 2);
-		expect(bg!.locked).toBe(false);
+		// Locked on import (HP-304): a reference is a backdrop to trace over, and an unlocked one
+		// gets dragged the moment the user reaches for a wall.
+		expect(bg!.locked).toBe(true);
 	});
 
 	test('renders at the selected resolution', async ({ page }) => {
@@ -238,8 +240,7 @@ test.describe('importing a page as the reference layer', () => {
 		await page.goto('/');
 		await expect(page.getByText('No projects yet')).toBeVisible();
 		await waitForHydration(page);
-		await page.getByRole('button', { name: /^Create Project$/ }).click();
-		await expect(page).toHaveURL(/\/editor/);
+		await clickUntilUrl(page, page.getByRole('button', { name: /^Create Project$/ }), /\/editor/);
 		await waitForHydration(page);
 		// Wait for the canvas to be interactive before importing.
 		await expect(page.getByText(/Grid/).first()).toBeVisible();

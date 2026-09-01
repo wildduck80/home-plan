@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
 /**
  * Storage helpers for the E2E suite.
@@ -161,6 +161,35 @@ export async function waitForHydration(page: Page): Promise<void> {
 			{ timeout: 30_000 }
 		)
 		.toBe(true);
+}
+
+/**
+ * Click a control until the URL matches, retrying if nothing happens.
+ *
+ * `waitForHydration` proves the client bundle has *loaded*, not that SvelteKit has finished
+ * attaching handlers — on a cold Vite compile there is a window where a button is visible and
+ * actionable but its click is silently discarded. Retrying is the only reliable remedy, and it
+ * is safe here because the action is idempotent from the user's point of view: either a project
+ * was created and we navigate, or nothing happened at all.
+ */
+export async function clickUntilUrl(
+	page: Page,
+	locator: Locator,
+	urlPattern: RegExp,
+	attempts = 6
+): Promise<void> {
+	for (let attempt = 0; attempt < attempts; attempt++) {
+		await locator.click();
+		try {
+			await page.waitForURL(urlPattern, { timeout: 4000, waitUntil: 'commit' });
+			return;
+		} catch {
+			if (urlPattern.test(page.url())) return;
+			// Handler not attached yet; give hydration a moment and try again.
+			await page.waitForTimeout(500);
+		}
+	}
+	throw new Error(`Clicking did not navigate to ${urlPattern} after ${attempts} attempts.`);
 }
 
 /**

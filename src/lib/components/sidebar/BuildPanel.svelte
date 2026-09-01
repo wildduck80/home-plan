@@ -209,14 +209,17 @@
   }
 
   /** Attach a rasterized reference image to the active floor. */
-  function applyReferenceImage(dataUrl: string) {
+  function applyReferenceImage(dataUrl: string, snapSegments: { x1: number; y1: number; x2: number; y2: number }[] = []) {
     setBackgroundImage({
       dataUrl,
       position: { x: 0, y: 0 },
       scale: 1,
       opacity: 0.4,
       rotation: 0,
-      locked: false,
+      // Locked by default: the reference is a backdrop to trace over, and an unlocked one gets
+      // dragged by accident the moment the user reaches for a wall (HP-304).
+      locked: true,
+      ...(snapSegments.length > 0 ? { snapSegments } : {}),
     });
     // The reference lands centred on the world origin, which is wherever the camera is not.
     // Without this the import looks like it did nothing at all.

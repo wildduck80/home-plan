@@ -196,6 +196,8 @@ test.describe('applying a calibration', () => {
 		});
 		await page.goto('/editor?id=legacyproj');
 		await waitForHydration(page);
+		// The project loads from IndexedDB asynchronously, so poll rather than reading once.
+		await expect.poll(() => readBackground(page), { timeout: 30_000 }).not.toBeNull();
 
 		const reloaded = await readBackground(page);
 		expect(reloaded!.scale).toBeCloseTo(applied!.scale, 6);
