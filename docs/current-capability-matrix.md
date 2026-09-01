@@ -310,9 +310,9 @@ bounds utility is its prerequisite.
 |---|---|---|---|
 | Wall drawing / snapping | Not verified | `none` | Interactive |
 | Wall numeric properties | Not verified | `none` | `PropertiesPanel.svelte` |
-| Wall length editing with anchors | Broken | `code` | No anchor concept found — HP-401 |
+| Wall length editing with anchors | Working | `test` + `e2e` | HP-401 — Start/Center/End; see §4.2 |
 | Doors / windows | Not verified | `none` | Persist correctly (`test`), placement UX unverified |
-| Opening offsets from wall start/end | Broken | `code` | Only normalized `position` 0–1 — HP-402 |
+| Opening offsets from wall start/end/centre | Working | `test` + `e2e` | HP-402 — edge-measured, clamped to the wall not to 5%; see §4.2 |
 | Stairs | Partially working | `test` (persist), `none` (render) | 4 types in the model |
 | Columns | Partially working | `test` (persist), `none` (render) | |
 | Measurements / annotations | Not verified | `none` | Persist correctly |
@@ -329,6 +329,39 @@ full deep copy of the project, so memory cost scales with project size × 50 —
 measuring once real multi-floor houses with background images exist.
 
 ---
+
+### 4.2 Exact dimensions after tracing (HP-401 / HP-402)
+
+`src/lib/domain/wallEditing.ts` holds the arithmetic, pure and tested (35 tests). This is what
+turns a traced approximation into the dimensions printed on the drawing.
+
+**Wall length anchors.** Length editing previously always moved the far end. It now offers
+Start / Center / End, and the choice matters: a traced wall usually has one corner already joined
+to its neighbours, and correcting the length must not drag that corner away. Curve control points
+scale with the wall so a curved wall does not straighten.
+
+**Opening offsets, corrected.** Two real problems were fixed:
+
+- Offsets now measure to the opening's **edges**, not its centre. That is how drawings dimension
+  them — the clear gap between a corner and a door frame — so the number in the panel now matches
+  the number on the plan.
+- The old handlers clamped position to 5–95% of the wall, which **silently refused legitimate
+  dimensions**. A door hard against a corner is ordinary, and a plan that says 0 cm should be
+  obeyed. Clamping is now to the opening's own half-width, which is the real constraint: the
+  edges must stay on the wall. An opening wider than its wall centres rather than producing an
+  impossible position — reachable by shrinking a wall beneath an existing door.
+- A **centre-from-start** field was added, the third way a drawing states a position, and the
+  labels changed from "Distance from A/B" to "From wall start/end", which is readable while
+  holding a drawing.
+
+#### A test premise that was wrong
+
+The first version of the exit-criterion spec resized two walls and expected the room area to
+follow. It did not, and the code was right: walls are independent segments, so changing one
+length breaks the loop rather than reshaping the room — the opposite wall does not move with it.
+Dragging connected geometry is `moveWallEndpoint`, a different operation, and arguably a gap worth
+its own ticket. The spec now asserts what these tickets actually promise: a stated dimension is
+honoured exactly, and attached openings stay valid.
 
 ## 5. Multi-floor
 
@@ -351,7 +384,7 @@ measuring once real multi-floor houses with background images exist.
 | Background image (PNG/JPG) | Working | `e2e` | Inline data URL; a missing redraw-on-load was fixed — see §6.1 |
 | Background transform (position/scale/rotation/opacity/lock) | Working | `test` | All five round-trip; calibration now sets scale and position together |
 | Background visibility toggle | Working | `e2e` | `visible` flag, `B` shortcut — HP-302/304 |
-| Background brightness / contrast | Broken | `code` | Still not in the type — HP-302 |
+| Background brightness / contrast | Working | `code` | HP-302 — canvas filter, sliders in the reference panel |
 | Scale calibration | Working | `test` + `e2e` | HP-303 done — two-point flow with live preview, Esc cancel, persisted record; see §6.2 |
 | **PDF import** | Working | `test` + `e2e` | HP-301 done — page picker, resolution presets, verified against the real architect PDF; see §6.1 |
 | Trace mode — snap to PDF line work | Working | `test` + `e2e` | HP-304 core; reference locked on import — see §6.3 |
@@ -614,7 +647,7 @@ the spec now provokes a change rather than expecting frames while idle.
 | `svelte-check` | Partially working | 6 errors, 25 warnings — all 6 from one cause, below |
 | Unit test runner | Working | Vitest; 184 tests |
 | CI | Working | GitHub Actions: check (no-regression), test, build |
-| E2E tests | Partially working | Playwright configured; 52 specs cover storage, Three.js lifecycle, PDF import, calibration, snap extraction and trace shortcuts. Rendering fidelity, walkthrough and export still uncovered |
+| E2E tests | Partially working | Playwright configured; 60 specs cover storage, Three.js lifecycle, PDF import, calibration, snap extraction, trace shortcuts and exact dimensions. Rendering fidelity, walkthrough and export still uncovered |
 | Ad-hoc root test scripts | Partially working | `test-room-polygons.ts`, `test-orthogonal.ts`, `test-furniture-rotation.ts` are `npx tsx` scripts that print to stdout — not runnable in CI. Worth porting into the Vitest suite alongside HP-201. |
 
 ### The 6 `svelte-check` errors
@@ -646,6 +679,8 @@ but it needs that check first, so it is not bundled into the foundation work.
 | Reference images stayed invisible until an unrelated repaint (§6.1) | Redraw triggered on image load; also fixes the pre-existing raster path |
 | Calibration used a blocking prompt() with no preview, cancel or record (§6.2) | Floating panel with live preview, Esc cancel, unit parsing and a persisted calibration record |
 | No way to trace accurately over a PDF (§6.3) | 63k line fragments merged to ~700 snap targets; wall and calibration points land on the drawing's real geometry |
+| Opening offsets clamped to 5% of the wall, refusing real dimensions (§4.2) | Clamped to the opening's own edges; a door flush to a corner is now expressible |
+| Wall length editing always moved the far end (§4.2) | Start/Center/End anchors |
 | X-junctions detected **0 rooms** on a four-quadrant plan (§2) | All ten fixtures pass |
 | Hit testing ignored per-item dimensions (§3.1) | One shared resolver across all six consumers |
 | Room reconciliation needed exact wall-set equality and dropped 3 of 5 authored fields (§2.1) | Similarity matching in a tested domain module; all authored fields carried |

@@ -4,6 +4,7 @@
   import { floorMaterials, wallColors } from '$lib/utils/materials';
   import { getCatalogItem } from '$lib/utils/furnitureCatalog';
   import { projectSettings, formatLength, formatArea } from '$lib/stores/settings';
+  import { openingOffsets, positionForOffset, resizeWallToLength, type LengthAnchor } from '$lib/domain/wallEditing';
   import { base } from '$app/paths';
   import type { Floor, Wall, Door, Window as Win, Room, FurnitureItem, Stair, Column, RoomCategory, TextAnnotation } from '$lib/models/types';
 
@@ -64,38 +65,29 @@
   }
 
   let wallLength = $derived(selectedWall ? Math.round(calcWallLength(selectedWall)) : 0);
+  /** Which end stays put when the length is edited (HP-401). */
+  let lengthAnchor = $state<LengthAnchor>('start');
 
   // Calculate door distances
-  let doorDistFromA = $derived(selectedDoor && selectedDoorWall ? Math.round(calcWallLength(selectedDoorWall) * selectedDoor.position) : 0);
-  let doorDistFromB = $derived(selectedDoor && selectedDoorWall ? Math.round(calcWallLength(selectedDoorWall) * (1 - selectedDoor.position)) : 0);
+  let doorDistFromA = $derived(selectedDoor && selectedDoorWall ? Math.round(openingOffsets(calcWallLength(selectedDoorWall), selectedDoor.position, selectedDoor.width).fromStart) : 0);
+  let doorDistFromB = $derived(selectedDoor && selectedDoorWall ? Math.round(openingOffsets(calcWallLength(selectedDoorWall), selectedDoor.position, selectedDoor.width).fromEnd) : 0);
 
   // Calculate window distances  
-  let windowDistFromA = $derived(selectedWindow && selectedWindowWall ? Math.round(calcWallLength(selectedWindowWall) * selectedWindow.position) : 0);
-  let windowDistFromB = $derived(selectedWindow && selectedWindowWall ? Math.round(calcWallLength(selectedWindowWall) * (1 - selectedWindow.position)) : 0);
+  let windowDistFromA = $derived(selectedWindow && selectedWindowWall ? Math.round(openingOffsets(calcWallLength(selectedWindowWall), selectedWindow.position, selectedWindow.width).fromStart) : 0);
+  let windowDistFromB = $derived(selectedWindow && selectedWindowWall ? Math.round(openingOffsets(calcWallLength(selectedWindowWall), selectedWindow.position, selectedWindow.width).fromEnd) : 0);
+  let doorCentre = $derived(selectedDoor && selectedDoorWall ? Math.round(calcWallLength(selectedDoorWall) * selectedDoor.position) : 0);
+  let windowCentre = $derived(selectedWindow && selectedWindowWall ? Math.round(calcWallLength(selectedWindowWall) * selectedWindow.position) : 0);
 
   function onWallLength(e: Event) {
     if (!selectedWall) return;
-    const target = e.target as HTMLInputElement;
-    const newLen = inputToCm(Number(target.value));
-    if (!isFinite(newLen) || newLen <= 0) return;
-    const currentLen = calcWallLength(selectedWall);
-    if (currentLen < 0.01) return;
-    const scale = newLen / currentLen;
-    const sx = selectedWall.start.x;
-    const sy = selectedWall.start.y;
-    const updates: Partial<Wall> = {
-      end: {
-        x: sx + (selectedWall.end.x - sx) * scale,
-        y: sy + (selectedWall.end.y - sy) * scale,
-      },
-    };
-    if (selectedWall.curvePoint) {
-      updates.curvePoint = {
-        x: sx + (selectedWall.curvePoint.x - sx) * scale,
-        y: sy + (selectedWall.curvePoint.y - sy) * scale,
-      };
+    const newLen = inputToCm(Number((e.target as HTMLInputElement).value));
+    try {
+      // The anchor decides which end moves. A traced wall usually has one corner already joined
+      // to its neighbours, and correcting the length must not drag that corner away (HP-401).
+      updateWall(selectedWall.id, resizeWallToLength(selectedWall, newLen, lengthAnchor));
+    } catch {
+      // Mid-typing values like "" or "0" are expected; leave the wall alone until it parses.
     }
-    updateWall(selectedWall.id, updates);
   }
   function onWallThickness(e: Event) {
     if (!selectedWall) return;
@@ -186,35 +178,43 @@
   // Door distance handlers
   function onDoorDistFromA(e: Event) {
     if (!selectedDoor || !selectedDoorWall) return;
-    const newDistFromA = inputToCm(Number((e.target as HTMLInputElement).value));
-    const wallLen = calcWallLength(selectedDoorWall);
-    const newPosition = Math.max(0.05, Math.min(0.95, newDistFromA / wallLen));
-    updateDoor(selectedDoor.id, { position: newPosition });
+    const value = inputToCm(Number((e.target as HTMLInputElement).value));
+    const position = positionForOffset(calcWallLength(selectedDoorWall), selectedDoor.width, 'fromStart', value);
+    updateDoor(selectedDoor.id, { position });
   }
   
   function onDoorDistFromB(e: Event) {
     if (!selectedDoor || !selectedDoorWall) return;
-    const newDistFromB = inputToCm(Number((e.target as HTMLInputElement).value));
-    const wallLen = calcWallLength(selectedDoorWall);
-    const newPosition = Math.max(0.05, Math.min(0.95, 1 - (newDistFromB / wallLen)));
-    updateDoor(selectedDoor.id, { position: newPosition });
+    const value = inputToCm(Number((e.target as HTMLInputElement).value));
+    const position = positionForOffset(calcWallLength(selectedDoorWall), selectedDoor.width, 'fromEnd', value);
+    updateDoor(selectedDoor.id, { position });
   }
 
   // Window distance handlers
   function onWindowDistFromA(e: Event) {
     if (!selectedWindow || !selectedWindowWall) return;
-    const newDistFromA = inputToCm(Number((e.target as HTMLInputElement).value));
-    const wallLen = calcWallLength(selectedWindowWall);
-    const newPosition = Math.max(0.05, Math.min(0.95, newDistFromA / wallLen));
-    updateWindow(selectedWindow.id, { position: newPosition });
+    const value = inputToCm(Number((e.target as HTMLInputElement).value));
+    const position = positionForOffset(calcWallLength(selectedWindowWall), selectedWindow.width, 'fromStart', value);
+    updateWindow(selectedWindow.id, { position });
   }
   
+  function onDoorCentre(e: Event) {
+    if (!selectedDoor || !selectedDoorWall) return;
+    const value = inputToCm(Number((e.target as HTMLInputElement).value));
+    updateDoor(selectedDoor.id, { position: positionForOffset(calcWallLength(selectedDoorWall), selectedDoor.width, 'centre', value) });
+  }
+
+  function onWindowCentre(e: Event) {
+    if (!selectedWindow || !selectedWindowWall) return;
+    const value = inputToCm(Number((e.target as HTMLInputElement).value));
+    updateWindow(selectedWindow.id, { position: positionForOffset(calcWallLength(selectedWindowWall), selectedWindow.width, 'centre', value) });
+  }
+
   function onWindowDistFromB(e: Event) {
     if (!selectedWindow || !selectedWindowWall) return;
-    const newDistFromB = inputToCm(Number((e.target as HTMLInputElement).value));
-    const wallLen = calcWallLength(selectedWindowWall);
-    const newPosition = Math.max(0.05, Math.min(0.95, 1 - (newDistFromB / wallLen)));
-    updateWindow(selectedWindow.id, { position: newPosition });
+    const value = inputToCm(Number((e.target as HTMLInputElement).value));
+    const position = positionForOffset(calcWallLength(selectedWindowWall), selectedWindow.width, 'fromEnd', value);
+    updateWindow(selectedWindow.id, { position });
   }
   // Preset colors for rooms and columns
   const roomColorPresets = [
@@ -332,6 +332,20 @@
         <span class="text-xs text-gray-500">Length ({unitLabel()})</span>
         <input type="number" value={displayValue(wallLength)} onchange={onWallLength} min="1" class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
+      <!-- Which end stays put when the length changes. A traced wall usually has one corner
+           already joined to its neighbours, and correcting the length must not drag it (HP-401). -->
+      <div>
+        <span class="text-xs text-gray-500">Keep fixed</span>
+        <div class="flex gap-1 mt-1" role="group" aria-label="Length anchor">
+          {#each [['start', 'Start'], ['center', 'Center'], ['end', 'End']] as [value, label] (value)}
+            <button
+              onclick={() => (lengthAnchor = value as LengthAnchor)}
+              aria-pressed={lengthAnchor === value}
+              class="flex-1 px-2 py-1 border rounded text-xs {lengthAnchor === value ? 'bg-blue-50 border-blue-400 text-blue-700 font-semibold' : 'border-gray-200 hover:bg-gray-50'}"
+            >{label}</button>
+          {/each}
+        </div>
+      </div>
       <label class="block">
         <span class="text-xs text-gray-500">Thickness ({unitLabel()})</span>
         <input type="number" value={displayValue(selectedWall.thickness)} oninput={onWallThickness} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
@@ -468,12 +482,16 @@
         <input type="number" value={displayValue(selectedDoor.width)} oninput={onDoorWidth} min="1" class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
       <label class="block">
-        <span class="text-xs text-gray-500">Distance from A ({unitLabel()})</span>
+        <span class="text-xs text-gray-500">From wall start ({unitLabel()})</span>
         <input type="number" value={displayValue(doorDistFromA)} oninput={onDoorDistFromA} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
       <label class="block">
-        <span class="text-xs text-gray-500">Distance from B ({unitLabel()})</span>
+        <span class="text-xs text-gray-500">From wall end ({unitLabel()})</span>
         <input type="number" value={displayValue(doorDistFromB)} oninput={onDoorDistFromB} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
+      </label>
+      <label class="block">
+        <span class="text-xs text-gray-500">Centre from start ({unitLabel()})</span>
+        <input type="number" value={displayValue(doorCentre)} oninput={onDoorCentre} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
       <label class="block">
         <span class="text-xs text-gray-500">Height ({unitLabel()})</span>
@@ -531,12 +549,16 @@
         <input type="number" value={displayValue(selectedWindow.width)} oninput={onWindowWidth} min="1" class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
       <label class="block">
-        <span class="text-xs text-gray-500">Distance from A ({unitLabel()})</span>
+        <span class="text-xs text-gray-500">From wall start ({unitLabel()})</span>
         <input type="number" value={displayValue(windowDistFromA)} oninput={onWindowDistFromA} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
       <label class="block">
-        <span class="text-xs text-gray-500">Distance from B ({unitLabel()})</span>
+        <span class="text-xs text-gray-500">From wall end ({unitLabel()})</span>
         <input type="number" value={displayValue(windowDistFromB)} oninput={onWindowDistFromB} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
+      </label>
+      <label class="block">
+        <span class="text-xs text-gray-500">Centre from start ({unitLabel()})</span>
+        <input type="number" value={displayValue(windowCentre)} oninput={onWindowCentre} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
       <label class="block">
         <span class="text-xs text-gray-500">Height ({unitLabel()})</span>
@@ -935,6 +957,18 @@
         <label class="block">
           <span class="text-xs text-gray-500">Scale</span>
           <input type="range" min="0.1" max="5" step="0.05" value={floor.backgroundImage.scale} oninput={(e) => updateBackgroundImage({ scale: Number((e.target as HTMLInputElement).value) })} class="w-full" />
+        </label>
+        <label class="block">
+          <span class="text-xs text-gray-500">Brightness</span>
+          <input type="range" min="0.4" max="2" step="0.05" value={floor.backgroundImage.brightness ?? 1}
+            oninput={(e) => updateBackgroundImage({ brightness: Number((e.target as HTMLInputElement).value) })}
+            class="w-full" />
+        </label>
+        <label class="block">
+          <span class="text-xs text-gray-500">Contrast</span>
+          <input type="range" min="0.4" max="3" step="0.05" value={floor.backgroundImage.contrast ?? 1}
+            oninput={(e) => updateBackgroundImage({ contrast: Number((e.target as HTMLInputElement).value) })}
+            class="w-full" />
         </label>
         <label class="block">
           <span class="text-xs text-gray-500">Rotation</span>

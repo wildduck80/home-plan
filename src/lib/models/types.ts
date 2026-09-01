@@ -157,6 +157,10 @@ export interface BackgroundImage {
    * Hiding is how you check traced geometry against nothing but itself (HP-304).
    */
   visible?: boolean;
+  /** Brightness multiplier, 1 = unchanged. Absent means unchanged (HP-302). */
+  brightness?: number;
+  /** Contrast multiplier, 1 = unchanged. Faint CAD line work often needs boosting. */
+  contrast?: number;
   /**
    * Line work extracted from a vector PDF, in the reference image's **pixel** space, used as
    * snap targets while tracing (HP-304). Pixel space rather than world space so the targets

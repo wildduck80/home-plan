@@ -1157,6 +1157,11 @@
     const s = worldToScreen(bg.position.x, bg.position.y);
     ctx.save();
     ctx.globalAlpha = bg.opacity;
+    // Faint CAD line work drawn at low opacity can be hard to trace against; brightness and
+    // contrast make it legible without turning the opacity up and drowning the geometry (HP-302).
+    if ((bg.brightness ?? 1) !== 1 || (bg.contrast ?? 1) !== 1) {
+      ctx.filter = `brightness(${bg.brightness ?? 1}) contrast(${bg.contrast ?? 1})`;
+    }
     ctx.translate(s.x, s.y);
     ctx.rotate(bg.rotation * Math.PI / 180);
     const sw = bgImage.width * bg.scale * zoom;
