@@ -465,6 +465,20 @@ export function addCustomEntourage(name: string, dataUrl: string, aspect: number
 export const calibrationMode = writable<boolean>(false);
 export const calibrationPoints = writable<Point[]>([]);
 
+/**
+ * Incremented to ask the 2D canvas to frame its content.
+ *
+ * A counter rather than a boolean so repeated requests always register, and a store rather than
+ * a direct call because the requester (an import action in the sidebar) has no reference to the
+ * canvas. Importing a reference plan without this leaves it off-screen whenever the camera
+ * happens to be elsewhere — which reads as "the import did nothing".
+ */
+export const zoomToFitRequest = writable<number>(0);
+
+export function requestZoomToFit() {
+  zoomToFitRequest.update((n) => n + 1);
+}
+
 export function removeElement(id: string) {
   mutate((f) => {
     // Check if the element being removed is a wall — if so, also remove associated doors/windows

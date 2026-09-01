@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { selectedTool, placingFurnitureId, placingDoorType, placingWindowType, placingStair, addStair, placingColumn, placingColumnShape, activeFloor, setBackgroundImage, canvasCamX, canvasCamY, placingEntourageId, addCustomEntourage } from '$lib/stores/project';
+  import { selectedTool, placingFurnitureId, placingDoorType, placingWindowType, placingStair, addStair, placingColumn, placingColumnShape, activeFloor, setBackgroundImage, requestZoomToFit, canvasCamX, canvasCamY, placingEntourageId, addCustomEntourage } from '$lib/stores/project';
   import type { Tool } from '$lib/stores/project';
   import type { Door, Window as Win, CustomEntourageDef } from '$lib/models/types';
   import { entourageCatalog, entourageCategories } from '$lib/utils/entourageCatalog';
@@ -218,6 +218,9 @@
       rotation: 0,
       locked: false,
     });
+    // The reference lands centred on the world origin, which is wherever the camera is not.
+    // Without this the import looks like it did nothing at all.
+    requestZoomToFit();
   }
 
   function onImportImage() {

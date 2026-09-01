@@ -82,6 +82,17 @@ async function readBackgroundImage(page: Page): Promise<{
 	});
 }
 
+/** The canvas's current zoom level, read from the store the canvas publishes to. */
+async function readZoom(page: Page): Promise<number> {
+	return page.evaluate(async () => {
+		const store = await import('/src/lib/stores/project.ts');
+		return new Promise<number>((resolve) => {
+			const unsub = store.canvasZoom.subscribe((v: number) => resolve(v));
+			unsub();
+		});
+	});
+}
+
 /** Natural pixel size of the imported reference image, decoded in the browser. */
 async function readBackgroundPixelSize(page: Page): Promise<{ width: number; height: number }> {
 	return page.evaluate(async () => {
@@ -214,6 +225,36 @@ test.describe('importing a page as the reference layer', () => {
 		// rather than an error, so a non-trivial decoded size is the real assertion.
 		expect(size.width * size.height).toBeLessThanOrEqual(16_000_000);
 		expect(size.width).toBeGreaterThan(1600);
+	});
+
+	/**
+	 * Found by using the feature for real. The reference lands centred on the world origin, so an
+	 * import into an empty project left it off-screen — and Fit did not help, because the bounds
+	 * calculation ignored the reference entirely and simply reset to zoom 1.
+	 */
+	test('frames the imported reference instead of leaving it off-screen', async ({ page }) => {
+		// An empty project: the reference is the only content, which is the case that broke.
+		await page.addInitScript(() => localStorage.setItem('hasSeenWelcome', '1'));
+		await page.goto('/');
+		await expect(page.getByText('No projects yet')).toBeVisible();
+		await waitForHydration(page);
+		await page.getByRole('button', { name: /^Create Project$/ }).click();
+		await expect(page).toHaveURL(/\/editor/);
+		await waitForHydration(page);
+		// Wait for the canvas to be interactive before importing.
+		await expect(page.getByText(/Grid/).first()).toBeVisible();
+
+		const zoomBefore = await readZoom(page);
+
+		await importFile(page, FIXTURE_PDF, 4);
+		await page.getByRole('button', { name: /Page 3/ }).click();
+		await page.getByRole('button', { name: /^Import page$/ }).click();
+		await expect.poll(() => readBackgroundImage(page), { timeout: 30_000 }).not.toBeNull();
+
+		// An A3 sheet at 1 px = 1 cm is metres across, so framing it must zoom well out. Sitting
+		// at the default zoom would mean the view never moved to the reference.
+		await expect.poll(() => readZoom(page), { timeout: 10_000 }).toBeLessThan(zoomBefore);
+		expect(await readZoom(page)).toBeLessThan(0.5);
 	});
 
 	test('a raster image still imports directly, without the page picker', async ({ page }) => {

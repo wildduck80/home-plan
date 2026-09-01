@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { activeFloor, selectedTool, selectedElementId, selectedElementIds, selectedRoomId, addWall, addDoor, addWindow, updateWall, moveWallEndpoint, updateDoor, updateWindow, addFurniture, moveFurniture, commitFurnitureMove, rotateFurniture, setFurnitureRotation, scaleFurniture, removeElement, placingFurnitureId, placingRotation, placingDoorType, placingWindowType, detectedRoomsStore, duplicateDoor, duplicateWindow, duplicateFurniture, duplicateWall, moveWallParallel, splitWall, snapEnabled, placingStair, addStair, moveStair, updateStair, placingColumn, placingColumnShape, addColumn, moveColumn, updateColumn, calibrationMode, calibrationPoints, updateBackgroundImage, setBackgroundImage, canvasZoom, canvasCamX, canvasCamY, panMode, showFurnitureStore, addGuide, moveGuide, removeGuide, beginUndoGroup, endUndoGroup, layerVisibility, updateRoom, addMeasurement, removeMeasurement, addAnnotation, removeAnnotation, updateAnnotation, addTextAnnotation, removeTextAnnotation, updateTextAnnotation, moveTextAnnotation, toggleFurnitureLock, createGroup, ungroupElements, findGroupForElement, placingEntourageId, addEntourageItem, moveEntourage, resizeEntourage, currentProject, elevationWallId, elevationPickMode } from '$lib/stores/project';
+  import { activeFloor, selectedTool, selectedElementId, selectedElementIds, selectedRoomId, addWall, addDoor, addWindow, updateWall, moveWallEndpoint, updateDoor, updateWindow, addFurniture, moveFurniture, commitFurnitureMove, rotateFurniture, setFurnitureRotation, scaleFurniture, removeElement, placingFurnitureId, placingRotation, placingDoorType, placingWindowType, detectedRoomsStore, duplicateDoor, duplicateWindow, duplicateFurniture, duplicateWall, moveWallParallel, splitWall, snapEnabled, placingStair, addStair, moveStair, updateStair, placingColumn, placingColumnShape, addColumn, moveColumn, updateColumn, calibrationMode, calibrationPoints, zoomToFitRequest, updateBackgroundImage, setBackgroundImage, canvasZoom, canvasCamX, canvasCamY, panMode, showFurnitureStore, addGuide, moveGuide, removeGuide, beginUndoGroup, endUndoGroup, layerVisibility, updateRoom, addMeasurement, removeMeasurement, addAnnotation, removeAnnotation, updateAnnotation, addTextAnnotation, removeTextAnnotation, updateTextAnnotation, moveTextAnnotation, toggleFurnitureLock, createGroup, ungroupElements, findGroupForElement, placingEntourageId, addEntourageItem, moveEntourage, resizeEntourage, currentProject, elevationWallId, elevationPickMode } from '$lib/stores/project';
   import type { Point, Wall, Door, Window as Win, FurnitureItem, Stair, Column, GuideLine, Measurement, Annotation, TextAnnotation, CustomEntourageDef } from '$lib/models/types';
   import type { Floor, Room } from '$lib/models/types';
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
@@ -156,6 +156,8 @@
   let columnDragOffset: Point = { x: 0, y: 0 };
   let isCalibrating: boolean = $state(false);
   let calPoints: Point[] = $state([]);
+  /** Set when an import asks for the view to be framed once the reference decodes. */
+  let fitReferenceOnLoad = false;
   let bgImage: HTMLImageElement | null = $state(null);
 
   // Room label drag state
@@ -1772,6 +1774,14 @@
     const unsub_layers = layerVisibility.subscribe((v) => { layerVis = v; markDirty(); });
     const unsub_col = placingColumn.subscribe((v) => { isPlacingColumn = v; markDirty(); });
     const unsub_cols = placingColumnShape.subscribe((v) => { placingColShape = v; markDirty(); });
+    // Skip the initial store value: only a real request should move the camera.
+    let sawFirstFitRequest = false;
+    const unsubFit = zoomToFitRequest.subscribe(() => {
+      if (!sawFirstFitRequest) { sawFirstFitRequest = true; return; }
+      // If the reference is already decoded, frame it now; otherwise defer to onload.
+      if (currentFloor?.backgroundImage && !bgImage) fitReferenceOnLoad = true;
+      else zoomToFit();
+    });
     const unsub12 = calibrationMode.subscribe((v) => { isCalibrating = v; markDirty(); });
     const unsub13 = calibrationPoints.subscribe((pts) => { calPoints = pts; markDirty(); });
     const unsub_multi = selectedElementIds.subscribe((ids) => { currentSelectedIds = ids; markDirty(); });
@@ -1786,6 +1796,13 @@
           // subscription ran — without this the reference stays invisible until some unrelated
           // interaction happens to trigger a redraw.
           markDirty();
+          // An import may have asked for the view to be framed. It has to happen here rather
+          // than at request time, because the image's pixel size — and therefore its world
+          // bounds — is not known until decoding completes.
+          if (fitReferenceOnLoad) {
+            fitReferenceOnLoad = false;
+            zoomToFit();
+          }
         };
         img.onerror = () => {
           console.error('[FloorPlanCanvas] Could not decode the reference image.');
@@ -1832,10 +1849,45 @@
     canvas.addEventListener('touchend', onTouchEnd, { passive: false });
     canvas.addEventListener('touchcancel', onTouchEnd, { passive: false });
 
-    return () => { resizeObs.disconnect(); unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); unsub13(); unsub_multi(); unsub_elevopen(); unsub_elevpick(); unsub14(); unsub_col(); unsub_cols(); unsub_layers(); unsub_snapgrid(); unsubEnt1(); unsubEnt2(); document.removeEventListener('paste', handlePaste); canvas.removeEventListener('touchstart', onTouchStart); canvas.removeEventListener('touchmove', onTouchMove); canvas.removeEventListener('touchend', onTouchEnd); canvas.removeEventListener('touchcancel', onTouchEnd); };
+    return () => { resizeObs.disconnect(); unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); unsub13(); unsubFit(); unsub_multi(); unsub_elevopen(); unsub_elevpick(); unsub14(); unsub_col(); unsub_cols(); unsub_layers(); unsub_snapgrid(); unsubEnt1(); unsubEnt2(); document.removeEventListener('paste', handlePaste); canvas.removeEventListener('touchstart', onTouchStart); canvas.removeEventListener('touchmove', onTouchMove); canvas.removeEventListener('touchend', onTouchEnd); canvas.removeEventListener('touchcancel', onTouchEnd); };
   });
 
   /** Compute world bounding box of all elements */
+  /**
+   * World-space bounds of the reference image, or null if there isn't one loaded.
+   *
+   * A rotated image is bounded by its circumscribed circle rather than its axis-aligned box —
+   * conservative, but it can never crop the reference out of a fit.
+   */
+  function referenceBounds(): { minX: number; minY: number; maxX: number; maxY: number } | null {
+    const bg = currentFloor?.backgroundImage;
+    if (!bg || !bgImage) return null;
+
+    const halfW = (bgImage.width * bg.scale) / 2;
+    const halfH = (bgImage.height * bg.scale) / 2;
+    const reach = bg.rotation ? Math.hypot(halfW, halfH) : 0;
+    const rx = reach || halfW;
+    const ry = reach || halfH;
+
+    return {
+      minX: bg.position.x - rx,
+      minY: bg.position.y - ry,
+      maxX: bg.position.x + rx,
+      maxY: bg.position.y + ry
+    };
+  }
+
+  /** Centre the camera on a world-space box and zoom so it fits, with a margin. */
+  function fitBoundsToViewport(minX: number, minY: number, maxX: number, maxY: number) {
+    const padding = 80;
+    const contentW = maxX - minX + padding * 2;
+    const contentH = maxY - minY + padding * 2;
+    camX = (minX + maxX) / 2;
+    camY = (minY + maxY) / 2;
+    zoom = Math.max(0.1, Math.min(width / contentW, height / contentH, 3));
+    markDirty();
+  }
+
   function getWorldBBox(): { minX: number; minY: number; maxX: number; maxY: number } | null {
     if (!currentFloor) return null;
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -1845,6 +1897,10 @@
     for (const fi of currentFloor.furniture) { const cat = getCatalogItem(fi.catalogId); if (!cat) continue; const { halfWidth, halfDepth } = furnitureHalfExtents(fi, cat); const r = Math.hypot(halfWidth, halfDepth); expand(fi.position.x - r, fi.position.y - r); expand(fi.position.x + r, fi.position.y + r); }
     if (currentFloor.stairs) for (const st of currentFloor.stairs) { expand(st.position.x - st.width / 2, st.position.y - st.depth / 2); expand(st.position.x + st.width / 2, st.position.y + st.depth / 2); }
     if (currentFloor.columns) for (const col of currentFloor.columns) { const r = col.diameter / 2; expand(col.position.x - r, col.position.y - r); expand(col.position.x + r, col.position.y + r); }
+    // The reference plan is content too — omitting it made the minimap and Fit ignore an
+    // imported plan entirely, so a plan on its own looked like an empty project.
+    const ref = referenceBounds();
+    if (ref) { expand(ref.minX, ref.minY); expand(ref.maxX, ref.maxY); }
     if (!found) return null;
     const pad = 50;
     return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
@@ -1878,8 +1934,16 @@
   }
 
   function zoomToFit() {
-    if (!currentFloor || (currentFloor.walls.length === 0 && currentFloor.furniture.length === 0)) {
+    const refOnly = referenceBounds();
+    const hasGeometry = !!currentFloor && (currentFloor.walls.length > 0 || currentFloor.furniture.length > 0);
+    if (!currentFloor || (!hasGeometry && !refOnly)) {
       camX = 0; camY = 0; zoom = 1;
+      return;
+    }
+    // A freshly imported plan is the only content: frame it rather than resetting to origin,
+    // which would leave a large sheet mostly off-screen.
+    if (!hasGeometry && refOnly) {
+      fitBoundsToViewport(refOnly.minX, refOnly.minY, refOnly.maxX, refOnly.maxY);
       return;
     }
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -1926,15 +1990,10 @@
         expand(col.position.x + r, col.position.y + r);
       }
     }
+    // Include the reference so Fit frames the plan alongside the geometry traced over it.
+    if (refOnly) { expand(refOnly.minX, refOnly.minY); expand(refOnly.maxX, refOnly.maxY); }
     if (minX === Infinity) { camX = 0; camY = 0; zoom = 1; return; }
-    const padding = 80;
-    const contentW = maxX - minX + padding * 2;
-    const contentH = maxY - minY + padding * 2;
-    camX = (minX + maxX) / 2;
-    camY = (minY + maxY) / 2;
-    zoom = Math.min(width / contentW, height / contentH, 3);
-    zoom = Math.max(zoom, 0.1);
-    markDirty();
+    fitBoundsToViewport(minX, minY, maxX, maxY);
   }
 
   // ── Hit-testing wrappers (delegating to hitTesting.ts) ──────────────
