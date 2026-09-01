@@ -97,7 +97,9 @@ export async function waitForAppDatabase(page: Page): Promise<void> {
 	// and let later assertions read a database the app had not created yet.
 	await expect
 		.poll(async () => (await readDatabaseLayout(page))?.objectStores ?? [], { timeout: 15_000 })
-		.toEqual(['meta', 'projects', 'thumbnails']);
+		// customFurniture was added in DB v2 (HP-505); it lives outside projects so deleting a
+		// project cannot destroy definitions used in another.
+		.toEqual(['customFurniture', 'meta', 'projects', 'thumbnails']);
 }
 
 /**

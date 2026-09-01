@@ -245,8 +245,29 @@ export const furnitureCatalog: FurnitureDef[] = [
   { id: 'sym_gas_line', name: 'Gas Line', category: 'Plumbing', icon: '⛽', color: '#f59e0b', width: 15, depth: 15, height: 0, symbol: true },
 ];
 
+/**
+ * User-defined furniture, registered at runtime (HP-504/505).
+ *
+ * A registry rather than a second lookup function: `getCatalogItem` is called from hit testing,
+ * collision, clearance, both renderers and the exporters. Adding a parallel async lookup would
+ * mean changing every one of those call sites and getting one wrong; registering into the
+ * existing sync lookup means they all resolve custom furniture without knowing it exists.
+ */
+const customDefs = new Map<string, FurnitureDef>();
+
+/** Replace the registered custom definitions. Called by the store once loaded. */
+export function registerCustomFurniture(defs: FurnitureDef[]): void {
+  customDefs.clear();
+  for (const def of defs) customDefs.set(def.id, def);
+}
+
 export function getCatalogItem(id: string): FurnitureDef | undefined {
-  return furnitureCatalog.find(f => f.id === id);
+  return furnitureCatalog.find(f => f.id === id) ?? customDefs.get(id);
+}
+
+/** Every definition available for placement, built-in and custom. */
+export function allFurnitureDefs(): FurnitureDef[] {
+  return [...furnitureCatalog, ...customDefs.values()];
 }
 
 export const furnitureCategories = [...new Set(furnitureCatalog.map(f => f.category))];

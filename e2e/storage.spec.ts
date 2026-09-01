@@ -41,8 +41,8 @@ test.describe('IndexedDB is the primary store', () => {
 		const layout = await readDatabaseLayout(page);
 
 		expect(layout).not.toBeNull();
-		expect(layout!.version).toBe(1);
-		expect(layout!.objectStores).toEqual(['meta', 'projects', 'thumbnails']);
+		expect(layout!.version).toBe(2);
+		expect(layout!.objectStores).toEqual(['customFurniture', 'meta', 'projects', 'thumbnails']);
 		// Listing sorts by recency, so the index must exist rather than reading every record.
 		expect(layout!.projectIndexes).toContain('updatedAt');
 	});

@@ -255,9 +255,9 @@ prevent.
 | Collision detection | Working | `test` + `e2e` | HP-601/602/603/604 — oriented, rotation-aware; see §3.3 |
 | Clearance zones | Working | `test` + `e2e` | HP-605/606 — PRD presets, drawn for the selection; see §3.4 |
 | Nearest-distance overlay | Working | `test` + `e2e` | HP-403 — true polygon distance, rotation-aware; see §3.4 |
-| Custom furniture (dimension-only) | Broken | `code` | Not found — HP-504 |
+| Custom furniture (dimension-only) | Working | `test` + `e2e` | HP-504/505 — kept outside projects; see §3.5 |
 | GLB/GLTF user import | Broken | `code` | Loader exists for built-ins; no user import — HP-506 |
-| Favorites / recently used | Not verified | `none` | HP-503 |
+| Favorites / recently used | Working | `code` | HP-503 — already existed in localStorage before this fork |
 
 ### 3.1 Hit testing ignored per-item dimensions — fixed (HP-203)
 
@@ -380,6 +380,32 @@ Warnings only: an E2E spec asserts the furniture does not move when a clearance 
 Adding a settings field broke the build in two places, because `FloorPlanCanvas` and
 `SettingsDialog` each held their own copy of the defaults literal. The compiler caught it, but
 only after the fact. `DEFAULT_PROJECT_SETTINGS` is now exported and both spread from it.
+
+### 3.5 Custom furniture (HP-504 / HP-505)
+
+The built-in catalog holds generic approximations — "Wardrobe, 120×60". Planning a real house
+means the wardrobe you actually own, which needs a name and three numbers. HP-504 explicitly
+allows a plain box, so there is no model import here.
+
+**Definitions live outside any project**, in their own IndexedDB object store (DB v2). HP-505
+requires that deleting one project cannot destroy definitions used in another, and storing them
+per-project would also mean re-creating the same wardrobe for every plan. localStorage mirrors
+them, matching the project store's fallback.
+
+#### Two decisions
+
+- **A catalog registry, not a second lookup.** `getCatalogItem` is called from hit testing,
+  collision, clearance, both renderers and the exporters. Adding a parallel async lookup would
+  mean changing every one of those and getting one wrong; `registerCustomFurniture` feeds the
+  existing sync lookup instead, so all of them resolve custom furniture without knowing it exists.
+- **Placements snapshot their dimensions.** The plan asks for "a stable definition ID **or
+  snapshot** strategy"; snapshotting is the safer half. `FurnitureItem` already carries per-item
+  width/depth/height, so writing them at placement time means a project opened on another device —
+  or after the definition was deleted — still shows furniture at the right size rather than a
+  fallback box. An E2E spec deletes a definition and asserts the placement keeps its size.
+
+Validation reports **every** invalid field at once, and rejects implausible dimensions: a typo of
+24000 for 240 would otherwise create furniture the size of a street.
 
 ## 4. Architecture editing
 
@@ -724,7 +750,7 @@ the spec now provokes a change rather than expecting frames while idle.
 | `svelte-check` | Partially working | 6 errors, 25 warnings — all 6 from one cause, below |
 | Unit test runner | Working | Vitest; 184 tests |
 | CI | Working | GitHub Actions: check (no-regression), test, build |
-| E2E tests | Partially working | Playwright configured; 69 specs cover storage, Three.js lifecycle, PDF import, calibration, snap extraction, trace shortcuts, exact dimensions, fit warnings and clearance. Rendering fidelity, walkthrough and export still uncovered |
+| E2E tests | Partially working | Playwright configured; 77 specs across storage, Three.js lifecycle, PDF import, calibration, snapping, exact dimensions, fit warnings, clearance and custom furniture. Rendering fidelity, walkthrough and export still uncovered |
 | Ad-hoc root test scripts | Partially working | `test-room-polygons.ts`, `test-orthogonal.ts`, `test-furniture-rotation.ts` are `npx tsx` scripts that print to stdout — not runnable in CI. Worth porting into the Vitest suite alongside HP-201. |
 
 ### The 6 `svelte-check` errors
@@ -761,6 +787,7 @@ but it needs that check first, so it is not bundled into the foundation work.
 | No collision detection at all (§3.3) | Rotation-aware furniture/furniture, furniture/wall and door-swing warnings, reported with overlap area |
 | Distance overlay measured from axis-aligned boxes (§3.4) | True polygon distance between rotated footprints |
 | No clearance concept (§3.4) | PRD presets, front-zone only, drawn and labelled for the selection |
+| Only generic catalog furniture (§3.5) | Custom pieces from a name and three numbers, kept across all projects |
 | X-junctions detected **0 rooms** on a four-quadrant plan (§2) | All ten fixtures pass |
 | Hit testing ignored per-item dimensions (§3.1) | One shared resolver across all six consumers |
 | Room reconciliation needed exact wall-set equality and dropped 3 of 5 authored fields (§2.1) | Similarity matching in a tested domain module; all authored fields carried |

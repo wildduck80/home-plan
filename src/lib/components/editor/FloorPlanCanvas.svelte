@@ -9,6 +9,7 @@
   import { resolveFurnitureDimensions, furnitureHalfExtents } from '$lib/domain/furniture';
   import { buildSnapIndex, findSnapTarget, type SnapIndex } from '$lib/import/reference/snapGeometry';
   import { findCollisions, type Collision } from '$lib/domain/collisionCheck';
+  import { isCustomFurnitureId } from '$lib/domain/customFurniture';
   import { clearanceZonesFor, findClearanceIssues, nearestDistances, type ClearanceIssue } from '$lib/domain/clearance';
   import { rectCorners, orientedBounds } from '$lib/domain/collision';
   import { imageToWorld, worldToImage } from '$lib/import/reference/referenceSpace';
@@ -2472,7 +2473,11 @@
       const wallSnap = snapFurnitureToWall(wp, currentPlacingId, currentPlacingRotation);
       const pos = wallSnap ? wallSnap.position : { x: snap(wp.x), y: snap(wp.y) };
       const rot = wallSnap ? wallSnap.rotation : currentPlacingRotation;
-      const id = addFurniture(currentPlacingId, pos);
+      // Custom definitions live outside the project, so stamp their size onto the placement.
+      const placedDef = isCustomFurnitureId(currentPlacingId) ? getCatalogItem(currentPlacingId) : undefined;
+      const id = addFurniture(currentPlacingId, pos, placedDef
+        ? { width: placedDef.width, depth: placedDef.depth, height: placedDef.height, color: placedDef.color }
+        : undefined);
       if (rot !== 0) {
         rotateFurniture(id, rot);
       }
@@ -3670,7 +3675,10 @@
     const pos = { x: snap(wp.x), y: snap(wp.y) };
 
     if (itemType === 'furniture') {
-      const id = addFurniture(itemId, pos);
+      const droppedDef = isCustomFurnitureId(itemId) ? getCatalogItem(itemId) : undefined;
+      const id = addFurniture(itemId, pos, droppedDef
+        ? { width: droppedDef.width, depth: droppedDef.depth, height: droppedDef.height, color: droppedDef.color }
+        : undefined);
       selectedElementId.set(id);
       selectedTool.set('select');
       placingFurnitureId.set(null);

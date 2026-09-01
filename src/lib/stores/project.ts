@@ -242,10 +242,22 @@ export function addWindow(wallId: string, position: number, windowType: import('
   return id;
 }
 
-export function addFurniture(catalogId: string, position: Point): string {
+/**
+ * Place a furniture item.
+ *
+ * `snapshot` stamps dimensions onto the placement itself. Used for custom furniture (HP-505): the
+ * definition lives outside the project, so a project opened on another device — or after the
+ * definition was deleted — would otherwise fall back to a default-sized box. Writing the size at
+ * placement time makes the plan self-contained.
+ */
+export function addFurniture(
+  catalogId: string,
+  position: Point,
+  snapshot?: { width: number; depth: number; height: number; color: string }
+): string {
   const id = uid();
   mutate((f) => {
-    f.furniture.push({ id, catalogId, position, rotation: 0, scale: { x: 1, y: 1, z: 1 } });
+    f.furniture.push({ id, catalogId, position, rotation: 0, scale: { x: 1, y: 1, z: 1 }, ...(snapshot ?? {}) });
   }, `Added ${catalogId}`);
   // Onboarding tip
   import('$lib/stores/onboarding.svelte').then(m => m.triggerTip('first-furniture', position.x + 20, position.y + 20));

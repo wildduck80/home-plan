@@ -15,6 +15,8 @@
   // AreaSummaryPanel moved to top bar dialog
   import { isPdfFile } from '$lib/import/pdf/renderPlan';
   import PdfImportDialog from '$lib/components/import/PdfImportDialog.svelte';
+  import { parseCustomFurnitureForm, type FormErrors } from '$lib/domain/customFurniture';
+  import { customFurniture, loadCustomFurniture, addCustomFurniture, deleteCustomFurniture } from '$lib/services/customFurnitureStore';
 
   let activeTab = $state<'draw' | 'rooms' | 'objects'>('draw');
   let constructionOpen = $state(true);
@@ -66,6 +68,26 @@
     selectedTool.set('furniture');
     placingFurnitureId.set(item.id);
     addToRecent(item.id);
+  }
+
+  // --- Custom furniture (HP-504/505) ---
+  let customDefs = $state<import('$lib/domain/customFurniture').CustomFurnitureDef[]>([]);
+  customFurniture.subscribe((defs) => { customDefs = defs; });
+  let customFormOpen = $state(false);
+  let customForm = $state({ name: '', category: 'Custom', width: '', depth: '', height: '' });
+  let customErrors = $state<FormErrors>({});
+
+  onMount(() => { void loadCustomFurniture(); });
+
+  async function saveCustomFurniture() {
+    const parsed = parseCustomFurnitureForm(customForm);
+    if (!parsed.ok) { customErrors = parsed.errors; return; }
+    customErrors = {};
+    const def = await addCustomFurniture(parsed.value);
+    customForm = { name: '', category: 'Custom', width: '', depth: '', height: '' };
+    customFormOpen = false;
+    // Arm it for placement straight away — you made it because you want to put it somewhere.
+    onFurnitureClick({ id: def.id, name: def.name, category: def.category, icon: '📦', color: def.color, width: def.width, depth: def.depth, height: def.height });
   }
 
   let withFurniture = $state(true);
@@ -601,6 +623,77 @@
 
     {:else if activeTab === 'objects'}
       <div class="space-y-2">
+        <!-- Custom furniture (HP-504/505). Above the catalog because the built-in entries are
+             generic approximations, and planning a real house means real pieces. -->
+        <div class="border border-gray-200 rounded-lg p-2">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-semibold text-gray-600">My furniture</span>
+            <span class="text-[10px] text-gray-400">{customDefs.length}</span>
+            <button
+              class="ml-auto text-xs text-blue-600 hover:underline"
+              onclick={() => (customFormOpen = !customFormOpen)}
+            >{customFormOpen ? 'Cancel' : '+ Add'}</button>
+          </div>
+
+          {#if customFormOpen}
+            <div class="mt-2 space-y-1.5">
+              <input
+                bind:value={customForm.name}
+                placeholder="Name, e.g. Hallway wardrobe"
+                class="w-full px-2 py-1 border rounded text-sm {customErrors.name ? 'border-red-400' : 'border-gray-200'}"
+              />
+              {#if customErrors.name}<p class="text-[10px] text-red-600">{customErrors.name}</p>{/if}
+              <div class="grid grid-cols-3 gap-1.5">
+                {#each [['width', 'W'], ['depth', 'D'], ['height', 'H']] as [field, label] (field)}
+                  <label class="block">
+                    <span class="text-[10px] text-gray-400">{label} (cm)</span>
+                    <input
+                      value={customForm[field as 'width' | 'depth' | 'height']}
+                      oninput={(e) => (customForm = { ...customForm, [field]: (e.target as HTMLInputElement).value })}
+                      inputmode="decimal"
+                      class="w-full px-1.5 py-1 border rounded text-sm {customErrors[field as 'width'] ? 'border-red-400' : 'border-gray-200'}"
+                    />
+                  </label>
+                {/each}
+              </div>
+              {#each ['width', 'depth', 'height'] as field (field)}
+                {#if customErrors[field as 'width']}
+                  <p class="text-[10px] text-red-600">{customErrors[field as 'width']}</p>
+                {/if}
+              {/each}
+              <button
+                class="w-full px-2 py-1.5 bg-blue-500 text-white rounded text-sm font-semibold hover:bg-blue-600"
+                onclick={saveCustomFurniture}
+              >Save and place</button>
+              <p class="text-[10px] text-gray-400">
+                Drawn as a box. Kept across all your projects.
+              </p>
+            </div>
+          {/if}
+
+          {#if customDefs.length > 0}
+            <div class="mt-2 space-y-1">
+              {#each customDefs as def (def.id)}
+                <div class="flex items-center gap-1.5 text-xs">
+                  <button
+                    class="flex-1 text-left px-2 py-1 rounded hover:bg-blue-50 {currentPlacing === def.id ? 'bg-blue-100 font-semibold' : ''}"
+                    onclick={() => onFurnitureClick({ id: def.id, name: def.name, category: def.category, icon: '📦', color: def.color, width: def.width, depth: def.depth, height: def.height })}
+                  >
+                    📦 {def.name}
+                    <span class="text-[10px] text-gray-400">{def.width}×{def.depth}×{def.height}</span>
+                  </button>
+                  <button
+                    class="text-gray-300 hover:text-red-600 px-1"
+                    onclick={() => deleteCustomFurniture(def.id)}
+                    title="Remove from My furniture — furniture already placed keeps its size"
+                    aria-label="Delete {def.name}"
+                  >✕</button>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
         <!-- Search with clear button and result count -->
         <div class="relative">
           <input

@@ -19,9 +19,10 @@ import { uid } from '$lib/domain/ids';
  * ## Layout
  *
  * ```text
- * projects    keyPath 'id'   — the project record, plus an `updatedAt` index for listing
- * thumbnails  keyPath 'id'   — { id, dataUrl }; derived data, safe to lose
- * meta        keyPath 'key'  — migration bookkeeping
+ * projects        keyPath 'id'   — the project record, plus an `updatedAt` index for listing
+ * thumbnails      keyPath 'id'   — { id, dataUrl }; derived data, safe to lose
+ * meta            keyPath 'key'  — migration bookkeeping
+ * customFurniture keyPath 'id'   — user furniture definitions, deliberately outside any project
  * ```
  *
  * Assets (background images, custom entourage PNGs) still live inline inside the project
@@ -30,17 +31,25 @@ import { uid } from '$lib/domain/ids';
  */
 
 const DB_NAME = 'openplan3d';
-const DB_VERSION = 1;
+// Bumped to 2 to add the custom-furniture store (HP-505). The upgrade below is additive and
+// guarded, so an existing database gains the store without touching its projects.
+const DB_VERSION = 2;
 
 const PROJECTS_STORE = 'projects';
 const THUMBNAILS_STORE = 'thumbnails';
 const META_STORE = 'meta';
+export const CUSTOM_FURNITURE_STORE = 'customFurniture';
 
 const MIGRATION_FLAG_KEY = 'localStorageMigrated';
 
 /** Keys used by the legacy localStorage store, read during migration. */
 const LEGACY_PROJECTS_KEY = 'floorplan_projects';
 const LEGACY_THUMB_PREFIX = 'floorplan_thumb_';
+
+/** Open the app database. Exported so sibling stores share one connection and one upgrade path. */
+export function openAppDatabase(): Promise<IDBPDatabase> {
+	return getDb();
+}
 
 /** True when this environment can use IndexedDB at all (absent in SSR and some private modes). */
 export function isIndexedDbAvailable(): boolean {
@@ -67,6 +76,11 @@ function getDb(): Promise<IDBPDatabase> {
 				}
 				if (!db.objectStoreNames.contains(META_STORE)) {
 					db.createObjectStore(META_STORE, { keyPath: 'key' });
+				}
+				// Deliberately its own store, not part of a project: deleting a project must not
+				// destroy furniture definitions used in another one (HP-505).
+				if (!db.objectStoreNames.contains(CUSTOM_FURNITURE_STORE)) {
+					db.createObjectStore(CUSTOM_FURNITURE_STORE, { keyPath: 'id' });
 				}
 			}
 		});
