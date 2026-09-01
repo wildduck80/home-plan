@@ -116,4 +116,57 @@ test.describe('snap targets from a real vector plan', () => {
 		expect(Math.abs(result!.dx)).toBeLessThan(0.001);
 		expect(Math.abs(result!.dy)).toBeLessThan(0.001);
 	});
+	test('B hides and shows the reference', async ({ page }) => {
+		await importRealPlan(page);
+		await expect.poll(() => readReference(page), { timeout: 60_000 }).not.toBeNull();
+
+		const visibility = () =>
+			page.evaluate(async () => {
+				const store = await import('/src/lib/stores/project.ts');
+				const floor = await new Promise<{ backgroundImage?: { visible?: boolean } } | null>(
+					(resolve) => {
+						const unsub = store.activeFloor.subscribe((v: unknown) => resolve(v as never));
+						unsub();
+					}
+				);
+				return floor?.backgroundImage?.visible;
+			});
+
+		// Absent means visible, so existing projects are unaffected by the flag.
+		expect(await visibility()).toBeUndefined();
+
+		await page.locator('canvas').first().click({ position: { x: 40, y: 40 } });
+		await page.keyboard.press('b');
+		await expect.poll(visibility, { timeout: 5000 }).toBe(false);
+
+		await page.keyboard.press('b');
+		await expect.poll(visibility, { timeout: 5000 }).toBe(true);
+	});
+
+	test('bracket keys step the reference opacity', async ({ page }) => {
+		await importRealPlan(page);
+		await expect.poll(() => readReference(page), { timeout: 60_000 }).not.toBeNull();
+
+		const opacity = () =>
+			page.evaluate(async () => {
+				const store = await import('/src/lib/stores/project.ts');
+				const floor = await new Promise<{ backgroundImage?: { opacity: number } } | null>(
+					(resolve) => {
+						const unsub = store.activeFloor.subscribe((v: unknown) => resolve(v as never));
+						unsub();
+					}
+				);
+				return floor?.backgroundImage?.opacity;
+			});
+
+		expect(await opacity()).toBeCloseTo(0.4, 2);
+
+		await page.locator('canvas').first().click({ position: { x: 40, y: 40 } });
+		await page.keyboard.press(']');
+		await expect.poll(opacity, { timeout: 5000 }).toBeCloseTo(0.5, 2);
+
+		await page.keyboard.press('[');
+		await page.keyboard.press('[');
+		await expect.poll(opacity, { timeout: 5000 }).toBeCloseTo(0.3, 2);
+	});
 });

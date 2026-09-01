@@ -153,6 +153,11 @@ export interface BackgroundImage {
   /** Original file name, shown in the properties panel. */
   sourceName?: string;
   /**
+   * Whether the reference is drawn. Absent means visible, so existing projects are unaffected.
+   * Hiding is how you check traced geometry against nothing but itself (HP-304).
+   */
+  visible?: boolean;
+  /**
    * Line work extracted from a vector PDF, in the reference image's **pixel** space, used as
    * snap targets while tracing (HP-304). Pixel space rather than world space so the targets
    * stay attached to the drawing through calibration, panning and rotation.

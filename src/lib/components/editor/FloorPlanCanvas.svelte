@@ -447,6 +447,12 @@
     return best;
   }
 
+  /** True when a reference plan with extracted line work is present — i.e. we are tracing. */
+  function tracingOverReference(): boolean {
+    const bg = currentFloor?.backgroundImage;
+    return !!bg && bg.visible !== false && (bg.snapSegments?.length ?? 0) > 0;
+  }
+
   function angleSnap(start: Point, end: Point): Point {
     if (!currentSnapEnabled) return end;
     const dx = end.x - start.x;
@@ -455,7 +461,10 @@
     if (len < 5) return end;
     const angle = Math.atan2(dy, dx);
     const snapAngles = [0, Math.PI / 4, Math.PI / 2, 3 * Math.PI / 4, Math.PI, -Math.PI, -3 * Math.PI / 4, -Math.PI / 2, -Math.PI / 4];
-    const ANGLE_THRESHOLD = Math.PI / 18;
+    // Wider capture when tracing: architect plans are orthogonal (61% of the real plan's
+    // segments are axis-aligned), so a near-horizontal drag is meant to be horizontal. On a
+    // freehand sketch the same width would fight the user, hence the condition.
+    const ANGLE_THRESHOLD = tracingOverReference() ? Math.PI / 9 : Math.PI / 18;
     for (const sa of snapAngles) {
       if (Math.abs(angle - sa) < ANGLE_THRESHOLD) {
         return { x: start.x + len * Math.cos(sa), y: start.y + len * Math.sin(sa) };
@@ -1143,6 +1152,8 @@
   function drawBackgroundImage() {
     if (!bgImage || !currentFloor?.backgroundImage) return;
     const bg = currentFloor.backgroundImage;
+    // `visible` absent means visible, so projects saved before the flag existed still draw.
+    if (bg.visible === false) return;
     const s = worldToScreen(bg.position.x, bg.position.y);
     ctx.save();
     ctx.globalAlpha = bg.opacity;
@@ -3487,6 +3498,16 @@
     }
     if (e.key === 'f' || e.key === 'F') {
       zoomToFit();
+    }
+    // Reference plan controls. Hiding it is how you check traced geometry on its own, and
+    // opacity needs to be adjustable without leaving the canvas (HP-304).
+    if ((e.key === 'b' || e.key === 'B') && currentFloor?.backgroundImage) {
+      updateBackgroundImage({ visible: currentFloor.backgroundImage.visible === false });
+    }
+    if ((e.key === '[' || e.key === ']') && currentFloor?.backgroundImage) {
+      const step = e.key === ']' ? 0.1 : -0.1;
+      const next = Math.max(0.05, Math.min(1, currentFloor.backgroundImage.opacity + step));
+      updateBackgroundImage({ opacity: Math.round(next * 100) / 100 });
     }
     // 'C' to close wall loop back to first point (but not Ctrl+C)
     if ((e.key === 'c' || e.key === 'C') && !e.ctrlKey && !e.metaKey && wallStart && wallSequenceFirst) {

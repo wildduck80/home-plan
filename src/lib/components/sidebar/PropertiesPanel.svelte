@@ -950,6 +950,19 @@
             class="flex-1 px-2 py-1.5 border rounded text-sm border-gray-200 hover:bg-gray-50"
           >📏 Set Scale</button>
         </div>
+        <!-- Shown as a button as well as a shortcut: a hidden reference with no visible control
+             would look like the import had vanished. -->
+        <button
+          onclick={() => updateBackgroundImage({ visible: floor!.backgroundImage!.visible === false })}
+          class="w-full px-2 py-1.5 border rounded text-sm {floor.backgroundImage.visible === false ? 'bg-slate-100 border-slate-400 text-slate-700' : 'border-gray-200 hover:bg-gray-50'}"
+          title="Toggle the reference plan (B)"
+        >{floor.backgroundImage.visible === false ? '🙈 Hidden — press B to show' : '👁 Visible (B to hide)'}</button>
+        {#if (floor.backgroundImage.snapSegments?.length ?? 0) > 0}
+          <p class="text-[11px] text-gray-400">
+            {floor.backgroundImage.snapSegments!.length} snap lines from the PDF · walls and
+            calibration points land on them. Opacity: <kbd>[</kbd> <kbd>]</kbd>
+          </p>
+        {/if}
         <button
           onclick={() => setBackgroundImage(undefined)}
           class="w-full px-2 py-1.5 border border-red-300 rounded text-sm text-red-600 hover:bg-red-50"

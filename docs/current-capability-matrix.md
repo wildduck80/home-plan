@@ -350,7 +350,8 @@ measuring once real multi-floor houses with background images exist.
 |---|---|---|---|
 | Background image (PNG/JPG) | Working | `e2e` | Inline data URL; a missing redraw-on-load was fixed — see §6.1 |
 | Background transform (position/scale/rotation/opacity/lock) | Working | `test` | All five round-trip; calibration now sets scale and position together |
-| Background brightness / contrast | Broken | `code` | Not in the type — HP-302 |
+| Background visibility toggle | Working | `e2e` | `visible` flag, `B` shortcut — HP-302/304 |
+| Background brightness / contrast | Broken | `code` | Still not in the type — HP-302 |
 | Scale calibration | Working | `test` + `e2e` | HP-303 done — two-point flow with live preview, Esc cancel, persisted record; see §6.2 |
 | **PDF import** | Working | `test` + `e2e` | HP-301 done — page picker, resolution presets, verified against the real architect PDF; see §6.1 |
 | Trace mode — snap to PDF line work | Working | `test` + `e2e` | HP-304 core; reference locked on import — see §6.3 |
@@ -503,11 +504,33 @@ candidate costs nothing. Most of the accuracy benefit, almost none of the risk.
 - An orange crosshair marks an active snap, because otherwise the user cannot tell whether an
   endpoint landed *on* the drawing or merely near it.
 
-#### Still outstanding from HP-304
+#### Trace ergonomics, and a deliberate deviation
 
-The snapping core is in. Not yet done: a dedicated trace mode toggle, an opacity hotkey, a
-hide/show reference shortcut, stronger angle constraints, and the magnifier (HP-305). The
-click-count comparison the ticket asks for has not been measured.
+HP-304 specifies a *trace mode*. Working through its list, most items turn out to be either
+already true or better as unconditional behaviour:
+
+| Ticket item | How it is delivered |
+|---|---|
+| Reference locked by default | Locked on import |
+| Adjustable opacity hot control | `[` and `]` step opacity |
+| Quick hide/show reference | `B` toggles, plus a panel button |
+| Stronger orthogonal/angle snapping | Capture widens from 10° to 20° **when a reference with line work is present** |
+| Wall tool immediately available | Already is |
+| Reference remains visible under geometry | Already does |
+
+So there is **no trace-mode toggle**, on purpose. A mode whose only real effect is the angle
+threshold is a mode the user has to remember to turn on; making it conditional on "a reference
+plan with extracted line work is visible" gets the same behaviour with nothing to forget. The
+threshold stays at 10° otherwise, because a wide capture that is right for an orthogonal
+architect plan would fight someone sketching freehand.
+
+The visibility control appears as a button as well as a shortcut: a hidden reference with no
+visible affordance would look like the import had vanished.
+
+#### Still outstanding
+
+The magnifier (HP-305) is not built. The click-count comparison HP-304 asks for has not been
+measured — that needs someone tracing a real room, which is the next thing worth doing.
 
 ## 7. Rendering, view and export
 
@@ -591,7 +614,7 @@ the spec now provokes a change rather than expecting frames while idle.
 | `svelte-check` | Partially working | 6 errors, 25 warnings — all 6 from one cause, below |
 | Unit test runner | Working | Vitest; 184 tests |
 | CI | Working | GitHub Actions: check (no-regression), test, build |
-| E2E tests | Partially working | Playwright configured; 50 specs cover storage, Three.js lifecycle, PDF import, calibration and snap extraction. Rendering fidelity, walkthrough and export still uncovered |
+| E2E tests | Partially working | Playwright configured; 52 specs cover storage, Three.js lifecycle, PDF import, calibration, snap extraction and trace shortcuts. Rendering fidelity, walkthrough and export still uncovered |
 | Ad-hoc root test scripts | Partially working | `test-room-polygons.ts`, `test-orthogonal.ts`, `test-furniture-rotation.ts` are `npx tsx` scripts that print to stdout — not runnable in CI. Worth porting into the Vitest suite alongside HP-201. |
 
 ### The 6 `svelte-check` errors
